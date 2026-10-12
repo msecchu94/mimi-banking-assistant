@@ -29,6 +29,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "integration: requires PostgreSQL via MIMI_TEST_DATABASE_URL",
+]
 
 [tool.ruff]
 line-length = 88

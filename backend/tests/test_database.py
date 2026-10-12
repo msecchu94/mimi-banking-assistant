@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from mimi.infrastructure.database.session import create_session_factory
 
+pytestmark = pytest.mark.integration
+
 PROBE_TABLE = "bf03_session_probe"
 
 

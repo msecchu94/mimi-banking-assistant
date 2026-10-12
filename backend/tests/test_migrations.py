@@ -1,8 +1,11 @@
 from pathlib import Path
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, inspect
+
+pytestmark = pytest.mark.integration
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
