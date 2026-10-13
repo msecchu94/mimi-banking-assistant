@@ -47,3 +47,25 @@ class TransactionCategory(StrEnum):
 class TransferStatus(StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+
+
+class ConversationStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    CLOSED = "CLOSED"
+
+
+class ConversationFlowState(StrEnum):
+    READY = "READY"
+    COLLECTING_DATA = "COLLECTING_DATA"
+    WAITING_CONFIRMATION = "WAITING_CONFIRMATION"
+
+
+class PendingOperationType(StrEnum):
+    TRANSFER = "TRANSFER"
+    FREEZE_CARD = "FREEZE_CARD"
+    UNFREEZE_CARD = "UNFREEZE_CARD"
+
+
+class MessageRole(StrEnum):
+    USER = "USER"
+    ASSISTANT = "ASSISTANT"

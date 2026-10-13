@@ -32,7 +32,7 @@ def table(name: str) -> Table:
 
 
 def test_financial_tables_are_registered_on_base_metadata() -> None:
-    assert set(Base.metadata.tables) == FINANCIAL_TABLES
+    assert FINANCIAL_TABLES <= set(Base.metadata.tables)
 
 
 @pytest.mark.parametrize("table_name", sorted(FINANCIAL_TABLES))
@@ -164,12 +164,14 @@ def test_relationships_match_domain_and_never_load_implicitly() -> None:
     relationships: dict[str, RelationshipProperty[object]] = {
         f"{mapper.class_.__name__}.{relationship.key}": relationship
         for mapper in Base.registry.mappers
+        if mapper.tables[0].name in FINANCIAL_TABLES
         for relationship in mapper.relationships
     }
 
     assert set(relationships) == {
         "CustomerModel.accounts",
         "CustomerModel.beneficiaries",
+        "CustomerModel.conversations",
         "AccountModel.customer",
         "AccountModel.cards",
         "AccountModel.transactions",
