@@ -1,21 +1,29 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import Engine, inspect
 
 pytestmark = pytest.mark.integration
 
-ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
 
 
 def run_alembic(engine: Engine, *args: str) -> None:
-    config = Config(ALEMBIC_INI)
-    with engine.begin() as connection:
-        config.attributes["connection"] = connection
-        name, *arguments = args
-        getattr(command, name)(config, *arguments)
+    # A separate process sees only what migrations/env.py imports, not models
+    # registered on Base.metadata during pytest collection.
+    database_url = engine.url.render_as_string(hide_password=False)
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), *args],
+        cwd=BACKEND_DIR,
+        env={**os.environ, "MIMI_DATABASE_URL": database_url},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_upgrade_and_downgrade_run_cleanly(test_engine: Engine) -> None:

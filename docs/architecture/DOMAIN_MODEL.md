@@ -157,6 +157,12 @@ CardType
 `CardBrand` represents the supported card brands present in the synthetic
 dataset.
 
+```text
+CardBrand
+├── VISA
+└── MASTERCARD
+```
+
 #### States
 
 ```text
@@ -419,6 +425,14 @@ Money
 
 `Currency` represents a supported monetary currency and is not a separate
 domain entity.
+
+The V1 supported currencies are:
+
+```text
+Currency
+├── ARS
+└── USD
+```
 
 ---
 

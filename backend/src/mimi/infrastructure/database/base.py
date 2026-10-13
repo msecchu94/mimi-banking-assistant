@@ -1,4 +1,8 @@
-from sqlalchemy import MetaData
+from datetime import datetime
+from decimal import Decimal
+from typing import Any
+
+from sqlalchemy import DateTime, MetaData, Numeric
 from sqlalchemy.orm import DeclarativeBase
 
 # Explicit constraint names keep Alembic migrations deterministic.
@@ -10,6 +14,13 @@ NAMING_CONVENTION = {
     "pk": "pk_%(table_name)s",
 }
 
+MONEY_PRECISION = 18
+MONEY_SCALE = 2
+
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    type_annotation_map: dict[Any, Any] = {
+        datetime: DateTime(timezone=True),
+        Decimal: Numeric(MONEY_PRECISION, MONEY_SCALE),
+    }
