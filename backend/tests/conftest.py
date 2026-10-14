@@ -1,11 +1,14 @@
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 
 from mimi.api.app import create_app
 from mimi.composition import Container, build_container
@@ -13,6 +16,8 @@ from mimi.config import AppEnvironment, Settings
 from mimi.infrastructure.database.session import create_db_engine
 
 TEST_DATABASE_URL_ENV = "MIMI_TEST_DATABASE_URL"
+
+MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
 # Engines built from this URL are never connected to.
 UNUSED_DATABASE_URL = "postgresql+psycopg://mimi:mimi@localhost:5432/mimi"
@@ -57,6 +62,26 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 @pytest.fixture(scope="session")
 def test_engine() -> Engine:
     return create_db_engine(require_test_database_url())
+
+
+def alembic_config(connection: Connection) -> Config:
+    # No config file, so migrations/env.py leaves pytest's logging untouched.
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    config.attributes["connection"] = connection
+    return config
+
+
+@pytest.fixture
+def migrated_engine(test_engine: Engine) -> Iterator[Engine]:
+    """Provide the test database migrated to head, reverted after the test."""
+    with test_engine.begin() as connection:
+        command.upgrade(alembic_config(connection), "head")
+    try:
+        yield test_engine
+    finally:
+        with test_engine.begin() as connection:
+            command.downgrade(alembic_config(connection), "base")
 
 
 @pytest.fixture

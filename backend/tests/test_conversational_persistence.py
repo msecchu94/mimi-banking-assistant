@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -21,7 +21,6 @@ from mimi.domain.enums import (
     MessageRole,
     PendingOperationType,
 )
-from mimi.infrastructure.database.base import Base
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
@@ -33,8 +32,6 @@ from mimi.infrastructure.database.models import (
 from mimi.infrastructure.database.session import create_session_factory
 
 pytestmark = pytest.mark.integration
-
-# DB-04 replaces create_all with the initial Alembic migration.
 
 NOW = datetime(2026, 10, 9, 13, 31, 4, tzinfo=timezone(timedelta(hours=-3)))
 
@@ -59,12 +56,8 @@ Overrides = Callable[[FinancialRefs], dict[str, Any]]
 
 
 @pytest.fixture
-def session_factory(test_engine: Engine) -> Iterator[sessionmaker[Session]]:
-    Base.metadata.create_all(test_engine)
-    try:
-        yield create_session_factory(test_engine)
-    finally:
-        Base.metadata.drop_all(test_engine)
+def session_factory(migrated_engine: Engine) -> sessionmaker[Session]:
+    return create_session_factory(migrated_engine)
 
 
 def conversation(refs: FinancialRefs, **overrides: Any) -> ConversationModel:
