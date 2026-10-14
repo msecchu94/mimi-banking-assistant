@@ -1,4 +1,3 @@
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -17,7 +16,6 @@ from mimi.domain.enums import (
     TransactionType,
     TransferStatus,
 )
-from mimi.infrastructure.database.base import Base
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
@@ -33,8 +31,6 @@ from mimi.infrastructure.database.transaction import (
 
 pytestmark = pytest.mark.integration
 
-# DB-04 replaces create_all with the initial Alembic migration.
-
 EXECUTED_AT = datetime(2026, 10, 9, 16, 31, 4, tzinfo=UTC)
 TRANSFER_AMOUNT = Money(Decimal("25000.00"), Currency.ARS)
 BALANCE_AFTER_TRANSFER = Money(Decimal("125000.50"), Currency.ARS)
@@ -45,12 +41,8 @@ class ExecutionInterrupted(Exception):
 
 
 @pytest.fixture
-def session_factory(test_engine: Engine) -> Iterator[sessionmaker[Session]]:
-    Base.metadata.create_all(test_engine)
-    try:
-        yield create_session_factory(test_engine)
-    finally:
-        Base.metadata.drop_all(test_engine)
+def session_factory(migrated_engine: Engine) -> sessionmaker[Session]:
+    return create_session_factory(migrated_engine)
 
 
 @dataclass(frozen=True)

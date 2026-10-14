@@ -1,4 +1,3 @@
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
@@ -21,7 +20,6 @@ from mimi.domain.enums import (
     TransactionType,
     TransferStatus,
 )
-from mimi.infrastructure.database.base import Base
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
@@ -41,19 +39,13 @@ from mimi.infrastructure.database.session import create_session_factory
 
 pytestmark = pytest.mark.integration
 
-# DB-04 replaces create_all with the initial Alembic migration.
-
 BUENOS_AIRES = timezone(timedelta(hours=-3))
 OCTOBER_1 = datetime(2026, 10, 1, tzinfo=BUENOS_AIRES)
 
 
 @pytest.fixture
-def session_factory(test_engine: Engine) -> Iterator[sessionmaker[Session]]:
-    Base.metadata.create_all(test_engine)
-    try:
-        yield create_session_factory(test_engine)
-    finally:
-        Base.metadata.drop_all(test_engine)
+def session_factory(migrated_engine: Engine) -> sessionmaker[Session]:
+    return create_session_factory(migrated_engine)
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy import Connection, create_engine, pool
 
 from mimi.config import get_settings
+from mimi.infrastructure.database import models  # noqa: F401 - registers tables
 from mimi.infrastructure.database.base import Base
 
 config = context.config
