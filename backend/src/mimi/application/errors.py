@@ -45,3 +45,8 @@ class CardNotFoundError(NotFoundError):
 class InvalidCardStateError(ConflictError):
     code = "INVALID_CARD_STATE"
     default_message = "The card's current state does not allow this operation."
+
+
+class BeneficiaryNotFoundError(NotFoundError):
+    code = "BENEFICIARY_NOT_FOUND"
+    default_message = "The requested beneficiary was not found."
