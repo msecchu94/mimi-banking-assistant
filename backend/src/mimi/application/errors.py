@@ -35,3 +35,13 @@ class BusinessRuleViolationError(ApplicationError):
 
 class DependencyUnavailableError(ApplicationError):
     """A required external dependency is temporarily unavailable."""
+
+
+class CardNotFoundError(NotFoundError):
+    code = "CARD_NOT_FOUND"
+    default_message = "The requested card was not found."
+
+
+class InvalidCardStateError(ConflictError):
+    code = "INVALID_CARD_STATE"
+    default_message = "The card's current state does not allow this operation."
