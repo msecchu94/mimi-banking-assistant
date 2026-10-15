@@ -50,3 +50,23 @@ class InvalidCardStateError(ConflictError):
 class BeneficiaryNotFoundError(NotFoundError):
     code = "BENEFICIARY_NOT_FOUND"
     default_message = "The requested beneficiary was not found."
+
+
+class AccountNotFoundError(NotFoundError):
+    code = "ACCOUNT_NOT_FOUND"
+    default_message = "The requested account was not found."
+
+
+class InvalidAccountStateError(ConflictError):
+    code = "INVALID_ACCOUNT_STATE"
+    default_message = "The account's current state does not allow this operation."
+
+
+class InvalidAmountError(BusinessRuleViolationError):
+    code = "INVALID_AMOUNT"
+    default_message = "The amount is not valid for this operation."
+
+
+class InsufficientFundsError(BusinessRuleViolationError):
+    code = "INSUFFICIENT_FUNDS"
+    default_message = "The account does not have sufficient funds."
