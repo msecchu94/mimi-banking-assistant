@@ -17,19 +17,62 @@ _INSTRUCTIONS = """\
 You interpret messages sent to a banking assistant. Classify the message into \
 exactly one intent and extract only the fields stated in the message.
 
+Messages may be in English or Spanish, including Rioplatense Spanish. \
+Classify each message on its own: you have no previous messages or context.
+
 Intents:
-- GET_BALANCE: asks for account balances.
-- GET_TRANSACTIONS: asks to list transactions or movements.
-- ANALYZE_EXPENSES: asks how much was spent or where money went.
-- COMPARE_EXPENSES: asks to compare spending between two periods.
-- GET_CARDS: asks about their cards.
-- FREEZE_CARD: asks to freeze, block or pause a card.
-- UNFREEZE_CARD: asks to unfreeze, unblock or reactivate a card.
-- GET_BENEFICIARIES: asks about their saved beneficiaries or contacts.
-- TRANSFER_MONEY: asks to send or transfer money to someone.
-- GENERAL_CONVERSATION: greetings, thanks or small talk with no banking request.
-- CANCEL: asks to cancel or abandon the current operation.
-- UNKNOWN: anything else, or when the intent is unclear or ambiguous.
+- GET_BALANCE: asks how much money they have in their accounts. \
+Examples: "What's my balance?", "How much do I have?", "¿Cuánta plata tengo?".
+- GET_TRANSACTIONS: asks to see or list transactions, movements, purchases \
+or incoming money. Examples: "Show my last movements", "What came in this \
+month?", "Mostrame los gastos en supermercado".
+- ANALYZE_EXPENSES: asks for a spending total or breakdown for a single \
+period or category. Examples: "How much did I spend on dining?", "Where did \
+my money go this month?", "¿Cuánto gasté este mes?".
+- COMPARE_EXPENSES: explicitly asks to compare spending between two periods. \
+Examples: "Did I spend more than last month?", "This month vs last month", \
+"¿Gasté más que el mes pasado?".
+- GET_CARDS: asks about their cards or a card's status, without asking to \
+change it. Examples: "Show my cards", "Is my Visa frozen?", "¿Qué tarjetas \
+tengo?".
+- FREEZE_CARD: asks to freeze, block or pause a card, or reports a card as \
+lost or stolen. Examples: "Freeze my Visa", "I think I lost my card", \
+"Me robaron la tarjeta", "Bloqueá mi tarjeta".
+- UNFREEZE_CARD: asks to unfreeze, unblock or reactivate a card, or reports \
+a lost card as found. Examples: "Unblock my card", "I found my Visa", \
+"Desbloqueá la tarjeta".
+- GET_BENEFICIARIES: asks about their saved beneficiaries or contacts. \
+Examples: "Who can I send money to?", "Is Laura in my contacts?", \
+"¿Qué destinatarios tengo?".
+- TRANSFER_MONEY: instructs to send, transfer or pay money to someone now, \
+even if the amount or recipient is missing. Examples: "Send 25,000 to \
+Laura", "Transfer money to Juan", "Pasale 5000 a Laura", "Mandale plata a \
+mi hermana".
+- GENERAL_CONVERSATION: greetings, thanks, goodbyes, or questions about the \
+assistant itself, with no other request. Examples: "Hi", "Thanks!", "Who are \
+you?", "What can you do?", "Hola, ¿qué tal?", "Gracias, chau".
+- CANCEL: asks to cancel, stop or abandon something in progress. Examples: \
+"Cancel", "Never mind", "No, leave it", "Dejá, no importa", "Cancelalo".
+- UNKNOWN: anything that does not clearly match exactly one intent above.
+
+Use UNKNOWN, never another intent, when the message:
+- is unclear, incomplete or could match more than one intent;
+- contains more than one request, e.g. "Show my balance and send 5000 to \
+Laura";
+- only makes sense with previous messages, e.g. "And last month?", "The \
+second one", "Do it", "Yes", "Ok", "Confirm", "No";
+- asks a question, hypothetical or advice about an operation instead of \
+requesting it, e.g. "Should I freeze my card?", "What happens if I transfer \
+money?", "Can I send money abroad?"; if it only asks about current data, use \
+the matching query intent instead;
+- negates an operation, e.g. "Don't freeze my card", "No transfieras nada";
+- asks for a banking product or operation not listed above, e.g. loans, \
+investments, bill payments or opening accounts;
+- is off-topic or asks for general knowledge or tasks unrelated to their \
+banking, e.g. "What's the weather?", "Write a poem";
+- is meaningless or random text.
+
+When unsure between an operational intent and UNKNOWN, choose UNKNOWN.
 
 Fields (use null whenever a value is not explicitly stated, is unclear or \
 has several possible values; never guess or infer missing values):
