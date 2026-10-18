@@ -215,6 +215,98 @@ def test_malformed_amounts_are_discarded_and_reported(text: str) -> None:
     assert result.beneficiary_reference == "Laura"
 
 
+@pytest.mark.parametrize(
+    ("intent", "field_name"),
+    [
+        (Intent.TRANSFER_MONEY, "amount"),
+        (Intent.TRANSFER_MONEY, "currency"),
+        (Intent.GET_TRANSACTIONS, "category"),
+        (Intent.GET_TRANSACTIONS, "period"),
+        (Intent.ANALYZE_EXPENSES, "category"),
+        (Intent.ANALYZE_EXPENSES, "period"),
+        (Intent.COMPARE_EXPENSES, "period"),
+        (Intent.COMPARE_EXPENSES, "comparison_period"),
+    ],
+)
+def test_unsupported_values_are_unset_and_reported(
+    intent: Intent, field_name: str
+) -> None:
+    result = interpret(model_output(intent=intent.value, **{field_name: "UNSUPPORTED"}))
+
+    assert result == Interpretation(
+        intent=intent, unsupported_fields=frozenset({field_name})
+    )
+
+
+def test_unsupported_values_keep_supported_siblings() -> None:
+    result = interpret(
+        model_output(
+            intent="TRANSFER_MONEY",
+            amount="25000",
+            currency="UNSUPPORTED",
+            beneficiary_reference="Laura",
+        )
+    )
+
+    assert result == Interpretation(
+        intent=Intent.TRANSFER_MONEY,
+        amount=Decimal("25000"),
+        beneficiary_reference="Laura",
+        unsupported_fields=frozenset({"currency"}),
+    )
+
+
+def test_unsupported_and_malformed_values_are_reported_separately() -> None:
+    result = interpret(
+        model_output(intent="TRANSFER_MONEY", amount="25,000", currency="UNSUPPORTED")
+    )
+
+    assert result == Interpretation(
+        intent=Intent.TRANSFER_MONEY,
+        invalid_fields=frozenset({"amount"}),
+        unsupported_fields=frozenset({"currency"}),
+    )
+
+
+def test_unsupported_values_of_fields_unrelated_to_the_intent_are_dropped() -> None:
+    unsupported = {
+        "amount": "UNSUPPORTED",
+        "currency": "UNSUPPORTED",
+        "category": "UNSUPPORTED",
+        "period": "UNSUPPORTED",
+        "comparison_period": "UNSUPPORTED",
+    }
+
+    balance = interpret(model_output(intent="GET_BALANCE", **unsupported))
+    transfer = interpret(model_output(intent="TRANSFER_MONEY", **unsupported))
+
+    assert balance == Interpretation(intent=Intent.GET_BALANCE)
+    assert transfer.unsupported_fields == frozenset({"amount", "currency"})
+
+
+@pytest.mark.parametrize("period", list(PeriodReference))
+def test_every_period_reference_is_kept_as_extracted(period: PeriodReference) -> None:
+    result = interpret(
+        model_output(
+            intent="COMPARE_EXPENSES",
+            period=period.value,
+            comparison_period=period.value,
+        )
+    )
+
+    assert result == Interpretation(
+        intent=Intent.COMPARE_EXPENSES, period=period, comparison_period=period
+    )
+
+
+def test_generic_card_reference_is_kept_as_candidate() -> None:
+    result = interpret(model_output(intent="FREEZE_CARD", card_reference="mi tarjeta"))
+
+    assert result == Interpretation(
+        intent=Intent.FREEZE_CARD, card_reference="mi tarjeta"
+    )
+
+
 def test_references_are_stripped_and_blank_references_are_unset() -> None:
     transfer = interpret(
         model_output(intent="TRANSFER_MONEY", beneficiary_reference="  Laura  ")
@@ -269,6 +361,16 @@ def test_instructions_define_every_intent() -> None:
         assert f"- {intent.value}:" in call["instructions"]
 
 
+def test_instructions_define_every_category_and_period_reference() -> None:
+    llm = FakeLLMProvider()
+
+    InterpretMessage(llm).execute("Hola")
+
+    [call] = llm.calls
+    for value in [*TransactionCategory, *PeriodReference]:
+        assert f"- {value.value}:" in call["instructions"]
+
+
 @pytest.mark.parametrize("message", ["", "   ", "\n\t"])
 def test_blank_message_is_unknown_without_calling_the_model(message: str) -> None:
     llm = FakeLLMProvider()
@@ -293,6 +395,7 @@ def test_provider_errors_propagate(error: Exception) -> None:
         model_output(intent="TRANSFER_FUNDS"),
         model_output(intent="TRANSFER_MONEY", currency="EUR"),
         model_output(intent="ANALYZE_EXPENSES", period="LAST_YEAR"),
+        model_output(intent="GET_TRANSACTIONS", transaction_type="UNSUPPORTED"),
         model_output(intent="TRANSFER_MONEY", beneficiary_id="b3c1"),
         {"intent": "TRANSFER_MONEY"},
     ],

@@ -80,6 +80,21 @@ The application is responsible for validating:
 
 The LLM cannot declare its own output valid.
 
+### Unsupported and Temporal Values
+
+A value the user states but V1 cannot represent (for example another
+currency, a merchant instead of a category, a relative amount, an
+unsupported period, or several values for one field) is reported as
+unsupported. It is never treated as absent or replaced with a default.
+
+V1 temporal references are symbolic and resolved to dates by the backend:
+
+```text
+TODAY · YESTERDAY · CURRENT_WEEK · PREVIOUS_WEEK · CURRENT_MONTH · PREVIOUS_MONTH
+```
+
+Named months, years, arbitrary ranges and rolling periods are unsupported.
+
 ---
 
 ## 4. Financial Source of Truth

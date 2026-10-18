@@ -25,6 +25,10 @@ class Intent(StrEnum):
 class PeriodReference(StrEnum):
     """A period as the user referred to it, not yet resolved to dates."""
 
+    TODAY = "TODAY"
+    YESTERDAY = "YESTERDAY"
+    CURRENT_WEEK = "CURRENT_WEEK"
+    PREVIOUS_WEEK = "PREVIOUS_WEEK"
     CURRENT_MONTH = "CURRENT_MONTH"
     PREVIOUS_MONTH = "PREVIOUS_MONTH"
 
@@ -37,6 +41,9 @@ class Interpretation:
     text, and completeness, resolution and business rules are decided later.
     Only fields relevant to ``intent`` are set. ``invalid_fields`` names fields
     the model extracted with a malformed value, which were discarded.
+    ``unsupported_fields`` names fields the user stated with a value V1 cannot
+    represent (e.g. another currency, a named month or several categories);
+    those fields are unset.
 
     For ``COMPARE_EXPENSES``, ``period`` is the period of interest and
     ``comparison_period`` the one it is compared against.
@@ -52,3 +59,4 @@ class Interpretation:
     period: PeriodReference | None = None
     comparison_period: PeriodReference | None = None
     invalid_fields: frozenset[str] = field(default_factory=frozenset)
+    unsupported_fields: frozenset[str] = field(default_factory=frozenset)
