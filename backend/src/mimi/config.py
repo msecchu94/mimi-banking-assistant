@@ -3,6 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import (
+    Field,
     PostgresDsn,
     SecretStr,
     TypeAdapter,
@@ -24,6 +25,10 @@ class AppEnvironment(StrEnum):
     PRODUCTION = "production"
 
 
+class LLMProviderName(StrEnum):
+    OPENAI = "openai"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="MIMI_",
@@ -36,6 +41,13 @@ class Settings(BaseSettings):
 
     environment: AppEnvironment = AppEnvironment.DEVELOPMENT
     database_url: SecretStr
+
+    # Model and API key are optional here and required only when the real
+    # provider is built, so components that never call the LLM need neither.
+    llm_provider: LLMProviderName = LLMProviderName.OPENAI
+    llm_model: str | None = Field(default=None, min_length=1)
+    llm_api_key: SecretStr | None = None
+    llm_timeout_seconds: float = Field(default=10.0, gt=0)
 
     @field_validator("database_url")
     @classmethod
