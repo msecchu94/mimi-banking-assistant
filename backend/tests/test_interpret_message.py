@@ -259,6 +259,16 @@ def test_sends_user_text_only_as_input_and_requests_structured_output() -> None:
     assert issubclass(call["output_type"], BaseModel)
 
 
+def test_instructions_define_every_intent() -> None:
+    llm = FakeLLMProvider()
+
+    InterpretMessage(llm).execute("Hola")
+
+    [call] = llm.calls
+    for intent in Intent:
+        assert f"- {intent.value}:" in call["instructions"]
+
+
 @pytest.mark.parametrize("message", ["", "   ", "\n\t"])
 def test_blank_message_is_unknown_without_calling_the_model(message: str) -> None:
     llm = FakeLLMProvider()
