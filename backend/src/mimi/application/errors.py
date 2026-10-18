@@ -70,3 +70,17 @@ class InvalidAmountError(BusinessRuleViolationError):
 class InsufficientFundsError(BusinessRuleViolationError):
     code = "INSUFFICIENT_FUNDS"
     default_message = "The account does not have sufficient funds."
+
+
+# LLM failures share the public SERVICE_UNAVAILABLE code: the client cannot act
+# differently on them, so the distinction stays internal.
+
+
+class LLMUnavailableError(DependencyUnavailableError):
+    code = "SERVICE_UNAVAILABLE"
+    default_message = "The service is temporarily unavailable."
+
+
+class LLMInvalidResponseError(DependencyUnavailableError):
+    code = "SERVICE_UNAVAILABLE"
+    default_message = "The service is temporarily unavailable."

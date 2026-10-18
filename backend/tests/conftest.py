@@ -7,10 +7,11 @@ from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
 from sqlalchemy import Connection, Engine
 
 from mimi.api.app import create_app
+from mimi.application.llm import LLMProvider
 from mimi.composition import Container, build_container
 from mimi.config import AppEnvironment, Settings
 from mimi.infrastructure.database.session import create_db_engine
@@ -38,14 +39,28 @@ def make_test_settings(database_url: str) -> Settings:
     )
 
 
+class FakeLLMProvider:
+    """Stands in for the real provider where no test exercises the LLM."""
+
+    def generate_structured[T: BaseModel](
+        self, *, instructions: str, input_text: str, output_type: type[T]
+    ) -> T:
+        raise AssertionError("unexpected LLM call")
+
+
 @pytest.fixture
 def test_settings() -> Settings:
     return make_test_settings(UNUSED_DATABASE_URL)
 
 
 @pytest.fixture
-def container(test_settings: Settings) -> Container:
-    return build_container(test_settings)
+def llm_provider() -> LLMProvider:
+    return FakeLLMProvider()
+
+
+@pytest.fixture
+def container(test_settings: Settings, llm_provider: LLMProvider) -> Container:
+    return build_container(test_settings, llm_provider)
 
 
 @pytest.fixture
@@ -86,6 +101,8 @@ def migrated_engine(test_engine: Engine) -> Iterator[Engine]:
 
 @pytest.fixture
 def test_container() -> Iterator[Container]:
-    container = build_container(make_test_settings(require_test_database_url()))
+    container = build_container(
+        make_test_settings(require_test_database_url()), FakeLLMProvider()
+    )
     yield container
     container.close()

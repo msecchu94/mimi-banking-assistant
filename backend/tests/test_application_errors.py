@@ -4,6 +4,8 @@ from mimi.application.errors import (
     BusinessRuleViolationError,
     ConflictError,
     DependencyUnavailableError,
+    LLMInvalidResponseError,
+    LLMUnavailableError,
     NotFoundError,
 )
 
@@ -40,3 +42,14 @@ def test_error_categories_cannot_be_raised_directly(
 ) -> None:
     with pytest.raises(TypeError, match="error category"):
         category()
+
+
+@pytest.mark.parametrize("error_type", [LLMUnavailableError, LLMInvalidResponseError])
+def test_llm_errors_are_dependency_unavailable_with_public_code(
+    error_type: type[DependencyUnavailableError],
+) -> None:
+    error = error_type()
+
+    assert isinstance(error, DependencyUnavailableError)
+    assert error.code == "SERVICE_UNAVAILABLE"
+    assert error.message == "The service is temporarily unavailable."
