@@ -100,9 +100,9 @@ def migrated_engine(test_engine: Engine) -> Iterator[Engine]:
 
 
 @pytest.fixture
-def test_container() -> Iterator[Container]:
+def test_container(llm_provider: LLMProvider) -> Iterator[Container]:
     container = build_container(
-        make_test_settings(require_test_database_url()), FakeLLMProvider()
+        make_test_settings(require_test_database_url()), llm_provider
     )
     yield container
     container.close()

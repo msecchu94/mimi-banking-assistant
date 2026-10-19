@@ -118,6 +118,18 @@ class Repositories(Protocol):
     """Repositories sharing one transaction."""
 
     @property
+    def accounts(self) -> AccountRepository: ...
+
+    @property
+    def cards(self) -> CardRepository: ...
+
+    @property
+    def beneficiaries(self) -> BeneficiaryRepository: ...
+
+    @property
+    def transactions(self) -> TransactionRepository: ...
+
+    @property
     def conversations(self) -> ConversationRepository: ...
 
     @property

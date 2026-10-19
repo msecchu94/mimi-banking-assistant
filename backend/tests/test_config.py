@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -203,3 +204,35 @@ def test_llm_api_key_is_masked_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert "sk-s3cret" not in repr(settings)
     assert "sk-s3cret" not in str(settings)
+
+
+def test_timezone_defaults_to_buenos_aires() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.timezone == ZoneInfo("America/Argentina/Buenos_Aires")
+
+
+def test_timezone_is_read_from_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MIMI_TIMEZONE", "America/Montevideo")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.timezone == ZoneInfo("America/Montevideo")
+
+
+def test_timezone_is_read_from_env_file(tmp_path: Path) -> None:
+    env_file = write_env_file(tmp_path, "MIMI_TIMEZONE=UTC\n")
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.timezone == ZoneInfo("UTC")
+
+
+@pytest.mark.parametrize("value", ["Mars/Olympus_Mons", "-03:00", ""])
+def test_invalid_timezone_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("MIMI_TIMEZONE", value)
+
+    with pytest.raises(ValidationError, match="timezone"):
+        Settings(_env_file=None)

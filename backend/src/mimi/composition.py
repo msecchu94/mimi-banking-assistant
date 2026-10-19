@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.llm import LLMProvider
+from mimi.application.read_only_queries import ReadOnlyQueryRouter
+from mimi.application.use_cases.interpret_message import InterpretMessage
 from mimi.config import LLMProviderName, Settings
 from mimi.infrastructure.database.session import (
     create_db_engine,
@@ -55,6 +57,9 @@ def build_container(settings: Settings, llm_provider: LLMProvider) -> Container:
         transaction_scope=transaction_scope,
         llm_provider=llm_provider,
         conversation_engine=ConversationEngine(
-            transaction_scope, clock=lambda: datetime.now(UTC)
+            transaction_scope,
+            interpreter=InterpretMessage(llm_provider),
+            router=ReadOnlyQueryRouter(settings.timezone),
+            clock=lambda: datetime.now(UTC),
         ),
     )

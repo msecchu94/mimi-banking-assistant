@@ -1,15 +1,24 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from mimi.application.conversation_engine import ConversationEngine
+from mimi.application.conversation_results import BalancesResult
+from mimi.application.errors import LLMUnavailableError
+from mimi.application.interpretation import Intent
+from mimi.application.llm import LLMProvider
+from mimi.application.read_only_queries import ReadOnlyQueryRouter
+from mimi.application.use_cases.interpret_message import InterpretMessage
 from mimi.composition import Container
-from mimi.domain.entities import Message, Money, Transaction, Transfer
+from mimi.domain.entities import Account, Message, Money, Transaction, Transfer
 from mimi.domain.enums import (
     AccountStatus,
     ConversationFlowState,
@@ -44,6 +53,49 @@ BALANCE_AFTER_TRANSFER = Money(Decimal("125000.50"), Currency.ARS)
 
 class ExecutionInterrupted(Exception):
     pass
+
+
+class ScriptedLLMProvider:
+    """Answers every interpretation request with a canned intent."""
+
+    def __init__(self, intent: Intent = Intent.GET_BALANCE) -> None:
+        self.intent = intent
+        self.error: Exception | None = None
+
+    def generate_structured[T: BaseModel](
+        self, *, instructions: str, input_text: str, output_type: type[T]
+    ) -> T:
+        if self.error is not None:
+            raise self.error
+        output: dict[str, Any] = dict.fromkeys(
+            [
+                "amount",
+                "currency",
+                "beneficiary_reference",
+                "card_reference",
+                "category",
+                "transaction_type",
+                "period",
+                "comparison_period",
+            ]
+        )
+        return output_type.model_validate({"intent": self.intent.value, **output})
+
+
+@pytest.fixture
+def llm_provider() -> ScriptedLLMProvider:
+    return ScriptedLLMProvider()
+
+
+def make_engine(
+    session_factory: sessionmaker[Session], llm_provider: LLMProvider
+) -> ConversationEngine:
+    return ConversationEngine(
+        PostgresTransactionScope(session_factory),
+        interpreter=InterpretMessage(llm_provider),
+        router=ReadOnlyQueryRouter(ZoneInfo("America/Argentina/Buenos_Aires")),
+        clock=lambda: EXECUTED_AT,
+    )
 
 
 @pytest.fixture
@@ -179,11 +231,12 @@ def stored_conversation(
 
 
 def test_engine_turn_commits_message_and_activity_together(
-    session_factory: sessionmaker[Session], seed: Seed
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
 ) -> None:
-    engine = ConversationEngine(
-        PostgresTransactionScope(session_factory), clock=lambda: EXECUTED_AT
-    )
+    llm_provider.intent = Intent.GENERAL_CONVERSATION
+    engine = make_engine(session_factory, llm_provider)
     record = engine.start(seed.customer_id)
 
     turn = engine.handle_message(
@@ -198,11 +251,11 @@ def test_engine_turn_commits_message_and_activity_together(
 
 
 def test_conversation_writes_roll_back_together_on_exception(
-    session_factory: sessionmaker[Session], seed: Seed
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
 ) -> None:
-    engine = ConversationEngine(
-        PostgresTransactionScope(session_factory), clock=lambda: EXECUTED_AT
-    )
+    engine = make_engine(session_factory, llm_provider)
     record = engine.start(seed.customer_id)
     later = datetime(2026, 10, 9, 17, 0, tzinfo=UTC)
 
@@ -243,3 +296,53 @@ def test_container_engine_persists_conversation_turns(
         assert conversation.flow_state is ConversationFlowState.READY
         assert conversation.updated_at == turn.message.created_at
         assert message.content == "What's my balance?"
+
+
+def test_engine_answers_balance_from_persisted_accounts(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    record = engine.start(seed.customer_id)
+
+    turn = engine.handle_message(
+        seed.customer_id, record.conversation.id, "What's my balance?"
+    )
+
+    assert turn.intent is Intent.GET_BALANCE
+    assert turn.result == BalancesResult(
+        (
+            Account(
+                id=seed.account_id,
+                customer_id=seed.customer_id,
+                name="Caja de ahorro",
+                balance=Money(Decimal("150000.50"), Currency.ARS),
+                status=AccountStatus.ACTIVE,
+            ),
+        )
+    )
+    assert stored_conversation(session_factory, record.conversation.id) == (
+        EXECUTED_AT,
+        [turn.message.id],
+    )
+
+
+def test_engine_failed_interpretation_persists_no_message(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    record = engine.start(seed.customer_id)
+    llm_provider.error = LLMUnavailableError()
+
+    with pytest.raises(LLMUnavailableError):
+        engine.handle_message(
+            seed.customer_id, record.conversation.id, "What's my balance?"
+        )
+
+    assert stored_conversation(session_factory, record.conversation.id) == (
+        record.conversation.updated_at,
+        [],
+    )
