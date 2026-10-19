@@ -6,17 +6,20 @@ traversed: reads are explicit selects mapped to Domain entities, so no ORM
 object leaves this module.
 """
 
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import CursorResult, Update, select, update
 from sqlalchemy.orm import Session
 
-from mimi.application.repositories import TransactionQuery
+from mimi.application.repositories import ConversationRecord, TransactionQuery
 from mimi.domain.entities import (
     Account,
     Beneficiary,
     Card,
+    Conversation,
+    Message,
     Money,
     Transaction,
     Transfer,
@@ -26,6 +29,8 @@ from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
     CardModel,
+    ConversationModel,
+    MessageModel,
     TransactionModel,
     TransferModel,
 )
@@ -78,6 +83,29 @@ def _to_transaction(model: TransactionModel) -> Transaction:
         description=model.description,
         occurred_at=model.occurred_at,
         transfer_id=model.transfer_id,
+    )
+
+
+def _to_conversation_record(model: ConversationModel) -> ConversationRecord:
+    return ConversationRecord(
+        conversation=Conversation(
+            id=model.id,
+            customer_id=model.customer_id,
+            status=model.status,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        ),
+        flow_state=model.flow_state,
+    )
+
+
+def _to_message(model: MessageModel) -> Message:
+    return Message(
+        id=model.id,
+        conversation_id=model.conversation_id,
+        role=model.role,
+        content=model.content,
+        created_at=model.created_at,
     )
 
 
@@ -231,3 +259,69 @@ class PostgresTransferRepository:
                 )
             )
             self._session.flush()
+
+
+class PostgresConversationRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, record: ConversationRecord) -> None:
+        conversation = record.conversation
+        self._session.add(
+            ConversationModel(
+                id=conversation.id,
+                customer_id=conversation.customer_id,
+                status=conversation.status,
+                created_at=conversation.created_at,
+                updated_at=conversation.updated_at,
+                flow_state=record.flow_state,
+                context={},
+            )
+        )
+        self._session.flush()
+
+    def get_for_update(
+        self, customer_id: UUID, conversation_id: UUID
+    ) -> ConversationRecord | None:
+        model = self._session.scalars(
+            select(ConversationModel)
+            .where(
+                ConversationModel.id == conversation_id,
+                ConversationModel.customer_id == customer_id,
+            )
+            .with_for_update()
+        ).one_or_none()
+        return _to_conversation_record(model) if model else None
+
+    def touch(self, conversation_id: UUID, updated_at: datetime) -> None:
+        _update_one(
+            self._session,
+            update(ConversationModel)
+            .where(ConversationModel.id == conversation_id)
+            .values(updated_at=updated_at),
+        )
+
+
+class PostgresMessageRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, message: Message) -> None:
+        self._session.add(
+            MessageModel(
+                id=message.id,
+                conversation_id=message.conversation_id,
+                role=message.role,
+                content=message.content,
+                created_at=message.created_at,
+            )
+        )
+        self._session.flush()
+
+    def list_by_conversation(self, conversation_id: UUID) -> list[Message]:
+        models = self._session.scalars(
+            select(MessageModel)
+            .where(MessageModel.conversation_id == conversation_id)
+            .order_by(MessageModel.created_at, MessageModel.id)
+        )
+        return [_to_message(model) for model in models]

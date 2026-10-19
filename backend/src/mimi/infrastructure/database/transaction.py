@@ -8,6 +8,8 @@ from mimi.application.repositories import (
     AccountRepository,
     BeneficiaryRepository,
     CardRepository,
+    ConversationRepository,
+    MessageRepository,
     TransactionRepository,
     TransferRepository,
 )
@@ -15,6 +17,8 @@ from mimi.infrastructure.database.repositories import (
     PostgresAccountRepository,
     PostgresBeneficiaryRepository,
     PostgresCardRepository,
+    PostgresConversationRepository,
+    PostgresMessageRepository,
     PostgresTransactionRepository,
     PostgresTransferRepository,
 )
@@ -29,6 +33,8 @@ class PostgresRepositories:
     beneficiaries: BeneficiaryRepository
     transactions: TransactionRepository
     transfers: TransferRepository
+    conversations: ConversationRepository
+    messages: MessageRepository
 
 
 class PostgresTransactionScope:
@@ -45,4 +51,6 @@ class PostgresTransactionScope:
                 beneficiaries=PostgresBeneficiaryRepository(session),
                 transactions=PostgresTransactionRepository(session),
                 transfers=PostgresTransferRepository(session),
+                conversations=PostgresConversationRepository(session),
+                messages=PostgresMessageRepository(session),
             )
