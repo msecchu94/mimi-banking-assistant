@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from openai import OpenAI
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.llm import LLMProvider
 from mimi.config import LLMProviderName, Settings
 from mimi.infrastructure.database.session import (
@@ -21,6 +23,7 @@ class Container:
     session_factory: sessionmaker[Session]
     transaction_scope: PostgresTransactionScope
     llm_provider: LLMProvider
+    conversation_engine: ConversationEngine
 
     def close(self) -> None:
         self.engine.dispose()
@@ -44,10 +47,14 @@ def build_llm_provider(settings: Settings) -> LLMProvider:
 def build_container(settings: Settings, llm_provider: LLMProvider) -> Container:
     engine = create_db_engine(settings.database_url.get_secret_value())
     session_factory = create_session_factory(engine)
+    transaction_scope = PostgresTransactionScope(session_factory)
     return Container(
         settings=settings,
         engine=engine,
         session_factory=session_factory,
-        transaction_scope=PostgresTransactionScope(session_factory),
+        transaction_scope=transaction_scope,
         llm_provider=llm_provider,
+        conversation_engine=ConversationEngine(
+            transaction_scope, clock=lambda: datetime.now(UTC)
+        ),
     )

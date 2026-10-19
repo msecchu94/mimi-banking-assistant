@@ -72,6 +72,16 @@ class InsufficientFundsError(BusinessRuleViolationError):
     default_message = "The account does not have sufficient funds."
 
 
+class ConversationNotFoundError(NotFoundError):
+    code = "CONVERSATION_NOT_FOUND"
+    default_message = "The requested conversation was not found."
+
+
+class ConversationClosedError(ConflictError):
+    code = "CONVERSATION_CLOSED"
+    default_message = "The conversation is closed and cannot continue."
+
+
 # LLM failures share the public SERVICE_UNAVAILABLE code: the client cannot act
 # differently on them, so the distinction stays internal.
 

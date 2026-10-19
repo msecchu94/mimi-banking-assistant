@@ -7,11 +7,15 @@ import pytest
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from mimi.application.conversation_engine import ConversationEngine
 from mimi.composition import Container
-from mimi.domain.entities import Money, Transaction, Transfer
+from mimi.domain.entities import Message, Money, Transaction, Transfer
 from mimi.domain.enums import (
     AccountStatus,
+    ConversationFlowState,
+    ConversationStatus,
     Currency,
+    MessageRole,
     TransactionCategory,
     TransactionType,
     TransferStatus,
@@ -19,7 +23,9 @@ from mimi.domain.enums import (
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
+    ConversationModel,
     CustomerModel,
+    MessageModel,
     TransactionModel,
     TransferModel,
 )
@@ -155,3 +161,85 @@ def test_container_scope_uses_container_database(
 
     with test_container.session_factory() as session:
         assert session.get(TransferModel, transfer_id) is not None
+
+
+def stored_conversation(
+    session_factory: sessionmaker[Session], conversation_id: UUID
+) -> tuple[datetime, list[UUID]]:
+    with session_factory() as session:
+        updated_at = session.get_one(ConversationModel, conversation_id).updated_at
+        message_ids = list(
+            session.scalars(
+                select(MessageModel.id).where(
+                    MessageModel.conversation_id == conversation_id
+                )
+            )
+        )
+        return updated_at, message_ids
+
+
+def test_engine_turn_commits_message_and_activity_together(
+    session_factory: sessionmaker[Session], seed: Seed
+) -> None:
+    engine = ConversationEngine(
+        PostgresTransactionScope(session_factory), clock=lambda: EXECUTED_AT
+    )
+    record = engine.start(seed.customer_id)
+
+    turn = engine.handle_message(
+        seed.customer_id, record.conversation.id, "Hello Mimi."
+    )
+
+    assert turn.flow_state is ConversationFlowState.READY
+    assert stored_conversation(session_factory, record.conversation.id) == (
+        EXECUTED_AT,
+        [turn.message.id],
+    )
+
+
+def test_conversation_writes_roll_back_together_on_exception(
+    session_factory: sessionmaker[Session], seed: Seed
+) -> None:
+    engine = ConversationEngine(
+        PostgresTransactionScope(session_factory), clock=lambda: EXECUTED_AT
+    )
+    record = engine.start(seed.customer_id)
+    later = datetime(2026, 10, 9, 17, 0, tzinfo=UTC)
+
+    with pytest.raises(ExecutionInterrupted):
+        with PostgresTransactionScope(session_factory).begin() as repositories:
+            repositories.messages.add(
+                Message(
+                    id=uuid4(),
+                    conversation_id=record.conversation.id,
+                    role=MessageRole.USER,
+                    content="Hello Mimi.",
+                    created_at=later,
+                )
+            )
+            repositories.conversations.touch(record.conversation.id, later)
+            raise ExecutionInterrupted
+
+    assert stored_conversation(session_factory, record.conversation.id) == (
+        EXECUTED_AT,
+        [],
+    )
+
+
+def test_container_engine_persists_conversation_turns(
+    session_factory: sessionmaker[Session], seed: Seed, test_container: Container
+) -> None:
+    engine = test_container.conversation_engine
+    record = engine.start(seed.customer_id)
+
+    turn = engine.handle_message(
+        seed.customer_id, record.conversation.id, "What's my balance?"
+    )
+
+    with session_factory() as session:
+        conversation = session.get_one(ConversationModel, record.conversation.id)
+        message = session.get_one(MessageModel, turn.message.id)
+        assert conversation.status is ConversationStatus.ACTIVE
+        assert conversation.flow_state is ConversationFlowState.READY
+        assert conversation.updated_at == turn.message.created_at
+        assert message.content == "What's my balance?"

@@ -5,6 +5,7 @@ from pydantic import SecretStr
 from sqlalchemy import text
 
 from mimi.api.app import create_app
+from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.llm import LLMProvider
 from mimi.composition import Container, build_container, build_llm_provider
 from mimi.config import Settings
@@ -34,6 +35,15 @@ def test_container_exposes_given_llm_provider(
     container: Container, llm_provider: LLMProvider
 ) -> None:
     assert container.llm_provider is llm_provider
+
+
+def test_container_wires_conversation_engine_to_transaction_scope(
+    container: Container,
+) -> None:
+    assert isinstance(container.conversation_engine, ConversationEngine)
+    assert (
+        container.conversation_engine._transaction_scope is container.transaction_scope
+    )
 
 
 def test_llm_provider_is_openai_adapter_with_configured_client(

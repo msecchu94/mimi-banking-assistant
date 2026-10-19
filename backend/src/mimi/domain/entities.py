@@ -8,7 +8,9 @@ from mimi.domain.enums import (
     CardBrand,
     CardStatus,
     CardType,
+    ConversationStatus,
     Currency,
+    MessageRole,
     TransactionCategory,
     TransactionType,
     TransferStatus,
@@ -70,3 +72,21 @@ class Transfer:
     status: TransferStatus
     created_at: datetime
     executed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class Conversation:
+    id: UUID
+    customer_id: UUID
+    status: ConversationStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class Message:
+    id: UUID
+    conversation_id: UUID
+    role: MessageRole
+    content: str
+    created_at: datetime

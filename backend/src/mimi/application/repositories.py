@@ -7,6 +7,7 @@ Updates expect the caller to have read the record earlier in the same
 transaction.
 """
 
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -16,11 +17,18 @@ from mimi.domain.entities import (
     Account,
     Beneficiary,
     Card,
+    Conversation,
+    Message,
     Money,
     Transaction,
     Transfer,
 )
-from mimi.domain.enums import CardStatus, TransactionCategory, TransactionType
+from mimi.domain.enums import (
+    CardStatus,
+    ConversationFlowState,
+    TransactionCategory,
+    TransactionType,
+)
 
 
 class AccountRepository(Protocol):
@@ -73,4 +81,50 @@ class TransactionRepository(Protocol):
 class TransferRepository(Protocol):
     def add(self, transfer: Transfer, transaction: Transaction | None) -> None:
         """Persist a transfer together with its resulting transaction, if any."""
+        ...
+
+
+@dataclass(frozen=True)
+class ConversationRecord:
+    """A Conversation together with its persisted conversational flow state."""
+
+    conversation: Conversation
+    flow_state: ConversationFlowState
+
+
+class ConversationRepository(Protocol):
+    def add(self, record: ConversationRecord) -> None:
+        """Persist a new conversation with empty context and no pending operation."""
+        ...
+
+    def get_for_update(
+        self, customer_id: UUID, conversation_id: UUID
+    ) -> ConversationRecord | None:
+        """Return the owned conversation, locked until the current transaction ends."""
+        ...
+
+    def touch(self, conversation_id: UUID, updated_at: datetime) -> None: ...
+
+
+class MessageRepository(Protocol):
+    def add(self, message: Message) -> None: ...
+
+    def list_by_conversation(self, conversation_id: UUID) -> list[Message]:
+        """Return the conversation's messages, oldest first."""
+        ...
+
+
+class Repositories(Protocol):
+    """Repositories sharing one transaction."""
+
+    @property
+    def conversations(self) -> ConversationRepository: ...
+
+    @property
+    def messages(self) -> MessageRepository: ...
+
+
+class TransactionScope(Protocol):
+    def begin(self) -> AbstractContextManager[Repositories]:
+        """Commit on normal exit and roll back on exception."""
         ...
