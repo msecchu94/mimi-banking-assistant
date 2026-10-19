@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from mimi.config import AppEnvironment, Settings
+from mimi.config import AppEnvironment, LLMProviderName, Settings
 
 VALID_DATABASE_URL = "postgresql+psycopg://mimi:s3cret@localhost:5432/mimi"
 
@@ -131,3 +131,75 @@ def test_database_url_is_masked_in_repr() -> None:
 
     assert "s3cret" not in repr(settings)
     assert "s3cret" not in str(settings)
+
+
+def test_llm_settings_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_provider is LLMProviderName.OPENAI
+    assert settings.llm_model is None
+    assert settings.llm_api_key is None
+    assert settings.llm_timeout_seconds == 10.0
+
+
+def test_llm_settings_are_read_from_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MIMI_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("MIMI_LLM_MODEL", "test-model")
+    monkeypatch.setenv("MIMI_LLM_API_KEY", "sk-s3cret")
+    monkeypatch.setenv("MIMI_LLM_TIMEOUT_SECONDS", "2.5")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_provider is LLMProviderName.OPENAI
+    assert settings.llm_model == "test-model"
+    assert settings.llm_api_key is not None
+    assert settings.llm_api_key.get_secret_value() == "sk-s3cret"
+    assert settings.llm_timeout_seconds == 2.5
+
+
+def test_llm_settings_are_read_from_env_file(tmp_path: Path) -> None:
+    env_file = write_env_file(
+        tmp_path, "MIMI_LLM_MODEL=test-model\nMIMI_LLM_API_KEY=sk-s3cret\n"
+    )
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.llm_model == "test-model"
+    assert settings.llm_api_key is not None
+    assert settings.llm_api_key.get_secret_value() == "sk-s3cret"
+
+
+@pytest.mark.parametrize("value", ["anthropic", "OpenAI", ""])
+def test_invalid_llm_provider_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("MIMI_LLM_PROVIDER", value)
+
+    with pytest.raises(ValidationError, match="llm_provider"):
+        Settings(_env_file=None)
+
+
+def test_empty_llm_model_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MIMI_LLM_MODEL", "")
+
+    with pytest.raises(ValidationError, match="llm_model"):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not a number"])
+def test_invalid_llm_timeout_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("MIMI_LLM_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(ValidationError, match="llm_timeout_seconds"):
+        Settings(_env_file=None)
+
+
+def test_llm_api_key_is_masked_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MIMI_LLM_API_KEY", "sk-s3cret")
+
+    settings = Settings(_env_file=None)
+
+    assert "sk-s3cret" not in repr(settings)
+    assert "sk-s3cret" not in str(settings)
