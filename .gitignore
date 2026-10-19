@@ -220,3 +220,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Experimental interpretation evaluation reports (only baseline.json is versioned)
+backend/evals/interpretation/reports/
