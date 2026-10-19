@@ -418,6 +418,22 @@ TRANSFER remains pending
 Mimi may remind the user that the previous operation remains pending when
 useful.
 
+### Period Defaults
+
+Symbolic periods are resolved to calendar periods in the configured
+application timezone.
+
+When the user omits a period:
+
+- `ANALYZE_EXPENSES` uses `CURRENT_MONTH`.
+- `COMPARE_EXPENSES` derives the omitted side only from these pairs:
+  `TODAY ↔ YESTERDAY`, `CURRENT_WEEK ↔ PREVIOUS_WEEK`,
+  `CURRENT_MONTH ↔ PREVIOUS_MONTH`. If both periods are omitted, or the stated
+  period has no pair, the comparison is not executed.
+- `GET_TRANSACTIONS` applies no temporal filter and no implicit limit.
+
+Defaults apply only to omitted periods, never to unsupported ones.
+
 ---
 
 ## 9. State-Changing Operation Flow
