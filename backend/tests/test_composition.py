@@ -5,7 +5,13 @@ from pydantic import SecretStr
 from sqlalchemy import text
 
 from mimi.api.app import create_app
+from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.llm import LLMProvider
+from mimi.application.read_only_queries import ReadOnlyQueryRouter
+from mimi.application.use_cases.interpret_message import (
+    InterpretCollectionInput,
+    InterpretMessage,
+)
 from mimi.composition import Container, build_container, build_llm_provider
 from mimi.config import Settings
 from mimi.infrastructure.llm.openai_provider import OpenAILLMProvider
@@ -34,6 +40,28 @@ def test_container_exposes_given_llm_provider(
     container: Container, llm_provider: LLMProvider
 ) -> None:
     assert container.llm_provider is llm_provider
+
+
+def test_container_wires_conversation_engine_to_transaction_scope(
+    container: Container,
+) -> None:
+    assert isinstance(container.conversation_engine, ConversationEngine)
+    assert (
+        container.conversation_engine._transaction_scope is container.transaction_scope
+    )
+
+
+def test_container_wires_conversation_engine_interpreter_and_router(
+    container: Container, llm_provider: LLMProvider, test_settings: Settings
+) -> None:
+    engine = container.conversation_engine
+
+    assert isinstance(engine._interpreter, InterpretMessage)
+    assert engine._interpreter._llm is llm_provider
+    assert isinstance(engine._collection_interpreter, InterpretCollectionInput)
+    assert engine._collection_interpreter._llm is llm_provider
+    assert isinstance(engine._router, ReadOnlyQueryRouter)
+    assert engine._router._timezone == test_settings.timezone
 
 
 def test_llm_provider_is_openai_adapter_with_configured_client(

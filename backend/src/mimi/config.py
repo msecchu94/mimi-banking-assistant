@@ -1,6 +1,7 @@
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     Field,
@@ -48,6 +49,9 @@ class Settings(BaseSettings):
     llm_model: str | None = Field(default=None, min_length=1)
     llm_api_key: SecretStr | None = None
     llm_timeout_seconds: float = Field(default=10.0, gt=0)
+
+    # IANA timezone in which symbolic periods such as "this month" are resolved.
+    timezone: ZoneInfo = ZoneInfo("America/Argentina/Buenos_Aires")
 
     @field_validator("database_url")
     @classmethod

@@ -1,9 +1,13 @@
 import pytest
 
 from mimi.application.errors import (
+    ApplicationError,
     BusinessRuleViolationError,
     ConflictError,
+    ConversationClosedError,
+    ConversationNotFoundError,
     DependencyUnavailableError,
+    InvalidConversationStateError,
     LLMInvalidResponseError,
     LLMUnavailableError,
     NotFoundError,
@@ -53,3 +57,24 @@ def test_llm_errors_are_dependency_unavailable_with_public_code(
     assert isinstance(error, DependencyUnavailableError)
     assert error.code == "SERVICE_UNAVAILABLE"
     assert error.message == "The service is temporarily unavailable."
+
+
+@pytest.mark.parametrize(
+    ("error_type", "category", "code"),
+    [
+        (ConversationNotFoundError, NotFoundError, "CONVERSATION_NOT_FOUND"),
+        (ConversationClosedError, ConflictError, "CONVERSATION_CLOSED"),
+        (
+            InvalidConversationStateError,
+            ConflictError,
+            "INVALID_CONVERSATION_STATE",
+        ),
+    ],
+)
+def test_conversation_errors_use_public_codes(
+    error_type: type[ApplicationError], category: type[ApplicationError], code: str
+) -> None:
+    error = error_type()
+
+    assert isinstance(error, category)
+    assert error.code == code

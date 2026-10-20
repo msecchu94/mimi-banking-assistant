@@ -1,17 +1,42 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import Engine, select
+from pydantic import BaseModel
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from mimi.application.conversation_context import EMPTY_CONTEXT
+from mimi.application.conversation_engine import ConversationEngine
+from mimi.application.conversation_results import (
+    BalancesResult,
+    NoPendingOperationResult,
+    OperationCancelledResult,
+    OperationCompletedResult,
+)
+from mimi.application.errors import ConversationClosedError, LLMUnavailableError
+from mimi.application.interactions import Cancel, Confirm
+from mimi.application.interpretation import Intent
+from mimi.application.llm import LLMProvider
+from mimi.application.pending_operations import PendingOperation, TransferOperationData
+from mimi.application.read_only_queries import ReadOnlyQueryRouter
+from mimi.application.use_cases.interpret_message import (
+    InterpretCollectionInput,
+    InterpretMessage,
+)
 from mimi.composition import Container
-from mimi.domain.entities import Money, Transaction, Transfer
+from mimi.domain.entities import Account, Message, Money, Transaction, Transfer
 from mimi.domain.enums import (
     AccountStatus,
+    ConversationFlowState,
+    ConversationStatus,
     Currency,
+    MessageRole,
+    PendingOperationType,
     TransactionCategory,
     TransactionType,
     TransferStatus,
@@ -19,7 +44,9 @@ from mimi.domain.enums import (
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
+    ConversationModel,
     CustomerModel,
+    MessageModel,
     TransactionModel,
     TransferModel,
 )
@@ -38,6 +65,51 @@ BALANCE_AFTER_TRANSFER = Money(Decimal("125000.50"), Currency.ARS)
 
 class ExecutionInterrupted(Exception):
     pass
+
+
+class ScriptedLLMProvider:
+    """Answers every interpretation request with a canned intent."""
+
+    def __init__(self, intent: Intent = Intent.GET_BALANCE) -> None:
+        self.intent = intent
+        self.error: Exception | None = None
+
+    def generate_structured[T: BaseModel](
+        self, *, instructions: str, input_text: str, output_type: type[T]
+    ) -> T:
+        if self.error is not None:
+            raise self.error
+        output: dict[str, Any] = dict.fromkeys(
+            [
+                "amount",
+                "currency",
+                "beneficiary_reference",
+                "card_reference",
+                "category",
+                "transaction_type",
+                "period",
+                "comparison_period",
+                "relative_period",
+            ]
+        )
+        return output_type.model_validate({"intent": self.intent.value, **output})
+
+
+@pytest.fixture
+def llm_provider() -> ScriptedLLMProvider:
+    return ScriptedLLMProvider()
+
+
+def make_engine(
+    session_factory: sessionmaker[Session], llm_provider: LLMProvider
+) -> ConversationEngine:
+    return ConversationEngine(
+        PostgresTransactionScope(session_factory),
+        interpreter=InterpretMessage(llm_provider),
+        collection_interpreter=InterpretCollectionInput(llm_provider),
+        router=ReadOnlyQueryRouter(ZoneInfo("America/Argentina/Buenos_Aires")),
+        clock=lambda: EXECUTED_AT,
+    )
 
 
 @pytest.fixture
@@ -155,3 +227,252 @@ def test_container_scope_uses_container_database(
 
     with test_container.session_factory() as session:
         assert session.get(TransferModel, transfer_id) is not None
+
+
+def stored_conversation(
+    session_factory: sessionmaker[Session], conversation_id: UUID
+) -> tuple[datetime, list[UUID]]:
+    with session_factory() as session:
+        updated_at = session.get_one(ConversationModel, conversation_id).updated_at
+        message_ids = list(
+            session.scalars(
+                select(MessageModel.id).where(
+                    MessageModel.conversation_id == conversation_id
+                )
+            )
+        )
+        return updated_at, message_ids
+
+
+def test_engine_turn_commits_message_and_activity_together(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    llm_provider.intent = Intent.GENERAL_CONVERSATION
+    engine = make_engine(session_factory, llm_provider)
+    record = engine.start(seed.customer_id)
+
+    turn = engine.handle_message(
+        seed.customer_id, record.conversation.id, "Hello Mimi."
+    )
+
+    assert turn.message is not None
+    assert turn.flow_state is ConversationFlowState.READY
+    assert stored_conversation(session_factory, record.conversation.id) == (
+        EXECUTED_AT,
+        [turn.message.id],
+    )
+
+
+def test_conversation_writes_roll_back_together_on_exception(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    record = engine.start(seed.customer_id)
+    later = datetime(2026, 10, 9, 17, 0, tzinfo=UTC)
+
+    with pytest.raises(ExecutionInterrupted):
+        with PostgresTransactionScope(session_factory).begin() as repositories:
+            repositories.messages.add(
+                Message(
+                    id=uuid4(),
+                    conversation_id=record.conversation.id,
+                    role=MessageRole.USER,
+                    content="Hello Mimi.",
+                    created_at=later,
+                )
+            )
+            repositories.conversations.touch(record.conversation.id, later)
+            raise ExecutionInterrupted
+
+    assert stored_conversation(session_factory, record.conversation.id) == (
+        EXECUTED_AT,
+        [],
+    )
+
+
+def test_container_engine_persists_conversation_turns(
+    session_factory: sessionmaker[Session], seed: Seed, test_container: Container
+) -> None:
+    engine = test_container.conversation_engine
+    record = engine.start(seed.customer_id)
+
+    turn = engine.handle_message(
+        seed.customer_id, record.conversation.id, "What's my balance?"
+    )
+
+    assert turn.message is not None
+    with session_factory() as session:
+        conversation = session.get_one(ConversationModel, record.conversation.id)
+        message = session.get_one(MessageModel, turn.message.id)
+        assert conversation.status is ConversationStatus.ACTIVE
+        assert conversation.flow_state is ConversationFlowState.READY
+        assert conversation.updated_at == turn.message.created_at
+        assert message.content == "What's my balance?"
+
+
+def test_engine_answers_balance_from_persisted_accounts(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    record = engine.start(seed.customer_id)
+
+    turn = engine.handle_message(
+        seed.customer_id, record.conversation.id, "What's my balance?"
+    )
+
+    assert turn.message is not None
+    assert turn.intent is Intent.GET_BALANCE
+    assert turn.result == BalancesResult(
+        (
+            Account(
+                id=seed.account_id,
+                customer_id=seed.customer_id,
+                name="Caja de ahorro",
+                balance=Money(Decimal("150000.50"), Currency.ARS),
+                status=AccountStatus.ACTIVE,
+            ),
+        )
+    )
+    assert stored_conversation(session_factory, record.conversation.id) == (
+        EXECUTED_AT,
+        [turn.message.id],
+    )
+
+
+def test_engine_failed_interpretation_persists_no_message(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    record = engine.start(seed.customer_id)
+    llm_provider.error = LLMUnavailableError()
+
+    with pytest.raises(LLMUnavailableError):
+        engine.handle_message(
+            seed.customer_id, record.conversation.id, "What's my balance?"
+        )
+
+    assert stored_conversation(session_factory, record.conversation.id) == (
+        record.conversation.updated_at,
+        [],
+    )
+
+
+def waiting_for_transfer(
+    session_factory: sessionmaker[Session], seed: Seed, engine: ConversationEngine
+) -> UUID:
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    with PostgresTransactionScope(session_factory).begin() as repositories:
+        repositories.conversations.save_pending_operation(
+            conversation_id,
+            ConversationFlowState.WAITING_CONFIRMATION,
+            PendingOperation(
+                PendingOperationType.TRANSFER,
+                TransferOperationData(
+                    seed.account_id, seed.beneficiary_id, TRANSFER_AMOUNT
+                ),
+            ),
+        )
+    return conversation_id
+
+
+def stored_flow(
+    session_factory: sessionmaker[Session], seed: Seed, conversation_id: UUID
+) -> tuple[ConversationFlowState, PendingOperation | None]:
+    with PostgresTransactionScope(session_factory).begin() as repositories:
+        record = repositories.conversations.get_for_update(
+            seed.customer_id, conversation_id
+        )
+        assert record is not None
+        return record.flow_state, record.pending_operation
+
+
+def test_engine_confirm_commits_the_transfer_and_clears_the_operation(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+
+    turn = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+    repeated = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+
+    assert isinstance(turn.result, OperationCompletedResult)
+    assert turn.result.transfer is not None
+    assert stored_state(session_factory, seed, turn.result.transfer.id) == (
+        Decimal("125000.50"),
+        True,
+        True,
+    )
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+    assert repeated.result == NoPendingOperationResult(Confirm())
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(TransferModel)) == 1
+
+
+def test_engine_cancel_clears_the_operation_without_financial_writes(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+
+    turn = engine.handle_interaction(seed.customer_id, conversation_id, Cancel())
+
+    assert isinstance(turn.result, OperationCancelledResult)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+    with session_factory() as session:
+        assert session.get_one(AccountModel, seed.account_id).balance == Decimal(
+            "150000.50"
+        )
+        assert session.scalar(select(func.count()).select_from(TransferModel)) == 0
+        assert session.scalar(select(func.count()).select_from(TransactionModel)) == 0
+
+
+def test_engine_close_discards_the_waiting_operation_without_executing_it(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+    message = engine.handle_message(seed.customer_id, conversation_id, "Saldo").message
+    assert message is not None
+
+    closed = engine.close(seed.customer_id, conversation_id)
+
+    with pytest.raises(ConversationClosedError):
+        engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+    with PostgresTransactionScope(session_factory).begin() as repositories:
+        stored = repositories.conversations.get_for_update(
+            seed.customer_id, conversation_id
+        )
+    assert stored == closed
+    assert stored.conversation.status is ConversationStatus.CLOSED
+    assert stored.pending_operation is None
+    assert stored.context == EMPTY_CONTEXT
+    assert stored_conversation(session_factory, conversation_id) == (
+        EXECUTED_AT,
+        [message.id],
+    )
+    with session_factory() as session:
+        assert session.get_one(AccountModel, seed.account_id).balance == Decimal(
+            "150000.50"
+        )
+        assert session.scalar(select(func.count()).select_from(TransferModel)) == 0

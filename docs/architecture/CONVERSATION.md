@@ -249,7 +249,8 @@ generic collection of values.
 TransferOperationData
 ├── source_account_id: UUID?
 ├── beneficiary_id: UUID?
-└── amount: Money?
+├── amount: Money?
+└── unresolved_amount: Decimal?
 ```
 
 Required fields:
@@ -259,6 +260,16 @@ source_account_id
 beneficiary_id
 amount
 ```
+
+`unresolved_amount` preserves a valid amount the user stated before its
+currency could be determined, for example "Transfer 25,000 to Laura" when the
+customer has accounts in more than one currency. It is a candidate, not
+resolved data: `amount` remains a missing field.
+
+It becomes `amount` once its currency is determined, either stated by the user
+or taken from the resolved source account, and always before pre-validation.
+A resolved `amount` is never converted to the currency of a source account
+selected later; it is cleared and requested again.
 
 ---
 
@@ -417,6 +428,22 @@ TRANSFER remains pending
 
 Mimi may remind the user that the previous operation remains pending when
 useful.
+
+### Period Defaults
+
+Symbolic periods are resolved to calendar periods in the configured
+application timezone.
+
+When the user omits a period:
+
+- `ANALYZE_EXPENSES` uses `CURRENT_MONTH`.
+- `COMPARE_EXPENSES` derives the omitted side only from these pairs:
+  `TODAY ↔ YESTERDAY`, `CURRENT_WEEK ↔ PREVIOUS_WEEK`,
+  `CURRENT_MONTH ↔ PREVIOUS_MONTH`. If both periods are omitted, or the stated
+  period has no pair, the comparison is not executed.
+- `GET_TRANSACTIONS` applies no temporal filter and no implicit limit.
+
+Defaults apply only to omitted periods, never to unsupported ones.
 
 ---
 

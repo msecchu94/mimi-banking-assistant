@@ -150,6 +150,11 @@ The Conversation Engine may determine that an operation is ready to be
 requested, but the corresponding Application Use Case determines whether
 that operation is valid according to application and domain rules.
 
+External LLM interpretation runs outside database transactions and locks.
+Afterwards, the Conversation Engine locks and revalidates the conversation,
+then persists the turn and routes it deterministically, all in one
+transaction.
+
 ---
 
 ### 3.4 LLM Provider

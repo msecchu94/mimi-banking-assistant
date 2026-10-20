@@ -60,3 +60,62 @@ class Interpretation:
     comparison_period: PeriodReference | None = None
     invalid_fields: frozenset[str] = field(default_factory=frozenset)
     unsupported_fields: frozenset[str] = field(default_factory=frozenset)
+
+
+class RelativePeriod(StrEnum):
+    """A period stated relative to the one the conversation is about."""
+
+    PREVIOUS = "PREVIOUS"
+
+
+@dataclass(frozen=True)
+class FollowUp:
+    """Validated candidate continuation of the conversation's last query.
+
+    Carries only values stated in the message, e.g. "¿Y el anterior?" or "And
+    on groceries?". The intent and every unstated value come from the
+    conversation's context, so a ``FollowUp`` is never routed directly: it is
+    first resolved into an ``Interpretation``. ``relative_period`` is the
+    period relative to the one in context; it is never set together with
+    ``period``.
+    """
+
+    category: TransactionCategory | None = None
+    transaction_type: TransactionType | None = None
+    period: PeriodReference | None = None
+    relative_period: RelativePeriod | None = None
+    invalid_fields: frozenset[str] = field(default_factory=frozenset)
+    unsupported_fields: frozenset[str] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True)
+class CollectionInput:
+    """Validated candidate data for the pending state-changing operation.
+
+    Carries only values stated in the message, such as "25000", "a Carlos" or
+    "la Visa", including corrections of values supplied earlier. Like an
+    ``Interpretation`` it is not authoritative: references are unresolved text
+    that the application resolves, validates and merges. ``invalid_fields`` and
+    ``unsupported_fields`` name fields the user stated with a value that was
+    discarded.
+    """
+
+    amount: Decimal | None = None
+    currency: Currency | None = None
+    beneficiary_reference: str | None = None
+    account_reference: str | None = None
+    card_reference: str | None = None
+    invalid_fields: frozenset[str] = field(default_factory=frozenset)
+    unsupported_fields: frozenset[str] = field(default_factory=frozenset)
+
+    @classmethod
+    def from_interpretation(cls, interpretation: Interpretation) -> "CollectionInput":
+        """The operation data stated in a state-changing request."""
+        return cls(
+            amount=interpretation.amount,
+            currency=interpretation.currency,
+            beneficiary_reference=interpretation.beneficiary_reference,
+            card_reference=interpretation.card_reference,
+            invalid_fields=interpretation.invalid_fields,
+            unsupported_fields=interpretation.unsupported_fields,
+        )

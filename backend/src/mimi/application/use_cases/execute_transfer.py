@@ -1,8 +1,8 @@
 from collections.abc import Callable
 from datetime import datetime
-from decimal import Decimal
 from uuid import UUID, uuid4
 
+from mimi.application.amounts import is_valid_transfer_amount
 from mimi.application.errors import (
     AccountNotFoundError,
     BeneficiaryNotFoundError,
@@ -15,7 +15,7 @@ from mimi.application.repositories import (
     BeneficiaryRepository,
     TransferRepository,
 )
-from mimi.domain.entities import Money, Transaction, Transfer
+from mimi.domain.entities import Account, Beneficiary, Money, Transaction, Transfer
 from mimi.domain.enums import (
     AccountStatus,
     TransactionCategory,
@@ -23,9 +23,33 @@ from mimi.domain.enums import (
     TransferStatus,
 )
 
-# Amounts must be exactly representable by the persisted NUMERIC(18, 2) columns.
-_CENT = Decimal("0.01")
-_AMOUNT_UPPER_BOUND = Decimal(10) ** 16
+
+def validate_transfer(
+    account: Account | None,
+    find_beneficiary: Callable[[], Beneficiary | None],
+    amount: Money,
+) -> tuple[Account, Beneficiary]:
+    """Check a transfer of ``amount`` against the current state of its owned
+    source account and saved beneficiary, ``None`` when not found.
+
+    The beneficiary is looked up only once the source account is found.
+    Raises the semantic error of the first rule that fails; returns the
+    account and beneficiary otherwise.
+    """
+    if not is_valid_transfer_amount(amount.amount):
+        raise InvalidAmountError()
+    if account is None:
+        raise AccountNotFoundError()
+    beneficiary = find_beneficiary()
+    if beneficiary is None:
+        raise BeneficiaryNotFoundError()
+    if account.status is not AccountStatus.ACTIVE:
+        raise InvalidAccountStateError()
+    if amount.currency is not account.balance.currency:
+        raise InvalidAmountError()
+    if account.balance.amount < amount.amount:
+        raise InsufficientFundsError()
+    return account, beneficiary
 
 
 class ExecuteTransfer:
@@ -60,21 +84,14 @@ class ExecuteTransfer:
         beneficiary_id: UUID,
         amount: Money,
     ) -> Transfer:
-        if not _is_valid_amount(amount.amount):
+        if not is_valid_transfer_amount(amount.amount):
             raise InvalidAmountError()
 
-        account = self._accounts.get_for_update(customer_id, source_account_id)
-        if account is None:
-            raise AccountNotFoundError()
-        beneficiary = self._beneficiaries.get(customer_id, beneficiary_id)
-        if beneficiary is None:
-            raise BeneficiaryNotFoundError()
-        if account.status is not AccountStatus.ACTIVE:
-            raise InvalidAccountStateError()
-        if amount.currency is not account.balance.currency:
-            raise InvalidAmountError()
-        if account.balance.amount < amount.amount:
-            raise InsufficientFundsError()
+        account, beneficiary = validate_transfer(
+            self._accounts.get_for_update(customer_id, source_account_id),
+            lambda: self._beneficiaries.get(customer_id, beneficiary_id),
+            amount,
+        )
 
         now = self._clock()
         if now.tzinfo is None or now.utcoffset() is None:
@@ -105,11 +122,3 @@ class ExecuteTransfer:
         )
         self._transfers.add(transfer, transaction)
         return transfer
-
-
-def _is_valid_amount(amount: Decimal) -> bool:
-    return (
-        amount.is_finite()
-        and _CENT <= amount < _AMOUNT_UPPER_BOUND
-        and amount.quantize(_CENT) == amount
-    )

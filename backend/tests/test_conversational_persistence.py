@@ -297,11 +297,19 @@ INVALID_STATES: dict[str, Overrides] = {
         "pending_beneficiary_id": refs.beneficiary_id,
         "pending_missing_fields": ["card_id"],
     },
-    "amount_without_currency": lambda refs: {
+    "unresolved_amount_not_missing": lambda refs: {
         "flow_state": COLLECTING_DATA,
         "pending_operation_type": TRANSFER,
         "pending_amount": Decimal("100.00"),
         "pending_missing_fields": ["beneficiary_id"],
+    },
+    "unresolved_amount_awaiting_confirmation": lambda refs: {
+        "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_type": TRANSFER,
+        "pending_source_account_id": refs.account_id,
+        "pending_beneficiary_id": refs.beneficiary_id,
+        "pending_amount": Decimal("100.00"),
+        "pending_missing_fields": [],
     },
     "currency_without_amount": lambda refs: {
         "flow_state": COLLECTING_DATA,
@@ -394,8 +402,11 @@ REJECTING_CONSTRAINT = {
     ),
     "transfer_with_card": "ck_conversations_pending_data_matches_type",
     "card_operation_with_transfer_data": "ck_conversations_pending_data_matches_type",
-    "amount_without_currency": "ck_conversations_pending_amount_has_currency",
-    "currency_without_amount": "ck_conversations_pending_amount_has_currency",
+    "unresolved_amount_not_missing": "ck_conversations_unresolved_amount_is_missing",
+    "unresolved_amount_awaiting_confirmation": (
+        "ck_conversations_unresolved_amount_is_missing"
+    ),
+    "currency_without_amount": "ck_conversations_pending_currency_has_amount",
     "zero_amount": "ck_conversations_pending_amount_positive",
     "negative_amount": "ck_conversations_pending_amount_positive",
     "card_field_missing_for_transfer": "ck_conversations_pending_missing_fields_valid",

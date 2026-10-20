@@ -8,6 +8,7 @@ from sqlalchemy import CHAR, CheckConstraint, Enum, ForeignKey, Index, String, T
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from mimi.application.pending_operations import PendingField
 from mimi.domain.enums import (
     AccountStatus,
     CardBrand,
@@ -172,8 +173,12 @@ class TransactionModel(Base):
 
 
 # Required data per pending operation type, as named in CONVERSATION.md.
-TRANSFER_OPERATION_FIELDS = ("source_account_id", "beneficiary_id", "amount")
-CARD_OPERATION_FIELDS = ("card_id",)
+TRANSFER_OPERATION_FIELDS = (
+    PendingField.SOURCE_ACCOUNT_ID.value,
+    PendingField.BENEFICIARY_ID.value,
+    PendingField.AMOUNT.value,
+)
+CARD_OPERATION_FIELDS = (PendingField.CARD_ID.value,)
 
 
 def sql_values(values: tuple[str, ...]) -> str:
@@ -244,8 +249,15 @@ class ConversationModel(Base):
             name="pending_data_matches_type",
         ),
         CheckConstraint(
-            "(pending_amount IS NULL) = (pending_currency IS NULL)",
-            name="pending_amount_has_currency",
+            "pending_currency IS NULL OR pending_amount IS NOT NULL",
+            name="pending_currency_has_amount",
+        ),
+        # An amount without currency is an unresolved candidate, so the amount
+        # is still missing.
+        CheckConstraint(
+            "pending_amount IS NULL OR pending_currency IS NOT NULL "
+            f"OR '{PendingField.AMOUNT.value}' = ANY(pending_missing_fields)",
+            name="unresolved_amount_is_missing",
         ),
         CheckConstraint(
             "pending_amount IS NULL OR pending_amount > 0",
