@@ -3,9 +3,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from mimi.application.conversation_context import ConversationContext
 from mimi.application.conversation_results import TurnResult
 from mimi.application.errors import ConversationClosedError, ConversationNotFoundError
-from mimi.application.interpretation import Intent
+from mimi.application.interpretation import FollowUp, Intent, Interpretation
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
 from mimi.application.repositories import (
     ConversationRecord,
@@ -19,7 +20,8 @@ from mimi.domain.enums import ConversationFlowState, ConversationStatus, Message
 
 @dataclass(frozen=True)
 class Turn:
-    """Outcome of handling one user message."""
+    """Outcome of handling one user message. ``intent`` is the effective intent:
+    a resolved follow-up reports the intent it continued."""
 
     conversation_id: UUID
     flow_state: ConversationFlowState
@@ -71,10 +73,13 @@ class ConversationEngine:
         self, customer_id: UUID, conversation_id: UUID, content: str
     ) -> Turn:
         """Interpret a user message in an owned ACTIVE conversation and answer
-        read-only queries.
+        read-only queries, including follow-ups of the previous query.
 
         The user message is persisted only together with the turn's result, so
         a failed interpretation leaves no trace. The flow state is not changed.
+        A follow-up is resolved against the context read under the turn lock.
+        Only an executed read-only query replaces the conversation's context;
+        any other turn leaves it unchanged.
 
         Raises ``ConversationNotFoundError`` when the conversation does not
         exist or is not owned by the customer, ``ConversationClosedError`` when
@@ -102,12 +107,29 @@ class ConversationEngine:
             )
             repositories.messages.add(message)
             repositories.conversations.touch(conversation_id, now)
-            result = self._router.route(repositories, customer_id, interpretation, now)
+            if isinstance(interpretation, FollowUp):
+                resolved = self._router.resolve_follow_up(
+                    interpretation, record.context, now
+                )
+            else:
+                resolved = interpretation
+            query = (
+                self._router.prepare(resolved)
+                if isinstance(resolved, Interpretation)
+                else resolved
+            )
+            if isinstance(query, Interpretation):
+                result = self._router.execute(repositories, customer_id, query, now)
+                repositories.conversations.save_context(
+                    conversation_id, ConversationContext.after_query(query, now)
+                )
+            else:
+                result = query
         return Turn(
             conversation_id=conversation_id,
             flow_state=record.flow_state,
             message=message,
-            intent=interpretation.intent,
+            intent=query.intent,
             result=result,
         )
 

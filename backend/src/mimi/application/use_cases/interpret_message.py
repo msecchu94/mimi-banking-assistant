@@ -4,7 +4,13 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
-from mimi.application.interpretation import Intent, Interpretation, PeriodReference
+from mimi.application.interpretation import (
+    FollowUp,
+    Intent,
+    Interpretation,
+    PeriodReference,
+    RelativePeriod,
+)
 from mimi.application.llm import LLMProvider
 from mimi.domain.enums import Currency, TransactionCategory, TransactionType
 
@@ -54,14 +60,18 @@ assistant itself, with no other request. Examples: "Hi", "Thanks!", "Who are \
 you?", "What can you do?", "Hola, ¿qué tal?", "Gracias, chau".
 - CANCEL: asks to cancel, stop or abandon something in progress. Examples: \
 "Cancel", "Never mind", "No, leave it", "Dejá, no importa", "Cancelalo".
+- FOLLOW_UP: only continues a previous question about transactions or \
+spending by stating a different period, category or transaction type, \
+without saying what is being asked. Examples: "And last month?", "¿Y el \
+anterior?", "¿Y la semana pasada?", "And on groceries?", "¿Y los ingresos?".
 - UNKNOWN: anything that does not clearly match exactly one intent above.
 
 Use UNKNOWN, never another intent, when the message:
 - is unclear, incomplete or could match more than one intent;
 - contains more than one request, e.g. "Show my balance and send 5000 to \
 Laura";
-- only makes sense with previous messages, e.g. "And last month?", "The \
-second one", "Do it", "Yes", "Ok", "Confirm", "No";
+- only makes sense with previous messages and is not a FOLLOW_UP, e.g. \
+"The second one", "Do it", "Yes", "Ok", "Confirm", "No";
 - asks a question, hypothetical or advice about an operation instead of \
 requesting it, e.g. "Should I freeze my card?", "What happens if I transfer \
 money?", "Can I send money abroad?"; if it only asks about current data, use \
@@ -116,6 +126,9 @@ débito", is not a transaction type.
   - PREVIOUS_WEEK: "last week", "la semana pasada".
   - CURRENT_MONTH: "this month", "este mes", "en lo que va del mes".
   - PREVIOUS_MONTH: "last month", "el mes pasado".
+- relative_period: only for FOLLOW_UP, PREVIOUS when the user asks for the \
+previous period without naming it, e.g. "¿Y el anterior?", "And the one \
+before?". Use null when a period is named, and set period instead.
 - comparison_period: for COMPARE_EXPENSES, the period it is compared \
 against, using the same values. If only one period is named, as in "Did I \
 spend more than last month?", set it here and leave period null.
@@ -144,12 +157,18 @@ class _Unsupported(StrEnum):
     UNSUPPORTED = "UNSUPPORTED"
 
 
+class _FollowUp(StrEnum):
+    """Marker for a message that only continues the previous query."""
+
+    FOLLOW_UP = "FOLLOW_UP"
+
+
 class _RawInterpretation(BaseModel):
     """Schema requested from the model. Its content is untrusted."""
 
     model_config = ConfigDict(extra="forbid")
 
-    intent: Intent
+    intent: Intent | _FollowUp
     amount: str | None
     currency: Currency | _Unsupported | None
     beneficiary_reference: str | None
@@ -158,6 +177,7 @@ class _RawInterpretation(BaseModel):
     transaction_type: TransactionType | None
     period: PeriodReference | _Unsupported | None
     comparison_period: PeriodReference | _Unsupported | None
+    relative_period: RelativePeriod | None
 
 
 _ALLOWED_FIELDS: dict[Intent, frozenset[str]] = {
@@ -175,11 +195,17 @@ _ALLOWED_FIELDS: dict[Intent, frozenset[str]] = {
     Intent.UNKNOWN: frozenset(),
 }
 
+_FOLLOW_UP_FIELDS = frozenset(
+    {"category", "transaction_type", "period", "relative_period"}
+)
+
 
 class InterpretMessage:
-    """Interpret a single natural-language message into a candidate intent.
+    """Interpret a single natural-language message into a candidate intent, or
+    into a ``FollowUp`` when it only continues the previous query.
 
-    The model's output is validated as untrusted input: fields unrelated to the
+    The message is interpreted on its own, without conversation context. The
+    model's output is validated as untrusted input: fields unrelated to the
     intent are dropped, malformed values are discarded and reported in
     ``invalid_fields``, and values marked unsupported are reported in
     ``unsupported_fields``. Nothing is resolved, checked for completeness or
@@ -192,7 +218,7 @@ class InterpretMessage:
     def __init__(self, llm: LLMProvider) -> None:
         self._llm = llm
 
-    def execute(self, message: str) -> Interpretation:
+    def execute(self, message: str) -> Interpretation | FollowUp:
         if not message.strip():
             return Interpretation(intent=Intent.UNKNOWN)
         raw = self._llm.generate_structured(
@@ -203,8 +229,12 @@ class InterpretMessage:
         return _validate(raw)
 
 
-def _validate(raw: _RawInterpretation) -> Interpretation:
-    allowed = _ALLOWED_FIELDS[raw.intent]
+def _validate(raw: _RawInterpretation) -> Interpretation | FollowUp:
+    allowed = (
+        _FOLLOW_UP_FIELDS
+        if isinstance(raw.intent, _FollowUp)
+        else _ALLOWED_FIELDS[raw.intent]
+    )
     invalid: set[str] = set()
     unsupported: set[str] = set()
 
@@ -239,6 +269,16 @@ def _validate(raw: _RawInterpretation) -> Interpretation:
             return None
         return text or None
 
+    if isinstance(raw.intent, _FollowUp):
+        return _follow_up(
+            category=supported("category", raw.category, TransactionCategory),
+            transaction_type=pick("transaction_type", raw.transaction_type),
+            period=supported("period", raw.period, PeriodReference),
+            relative_period=pick("relative_period", raw.relative_period),
+            invalid=invalid,
+            unsupported=unsupported,
+        )
+
     return Interpretation(
         intent=raw.intent,
         amount=amount,
@@ -253,6 +293,29 @@ def _validate(raw: _RawInterpretation) -> Interpretation:
         comparison_period=supported(
             "comparison_period", raw.comparison_period, PeriodReference
         ),
+        invalid_fields=frozenset(invalid),
+        unsupported_fields=frozenset(unsupported),
+    )
+
+
+def _follow_up(
+    *,
+    category: TransactionCategory | None,
+    transaction_type: TransactionType | None,
+    period: PeriodReference | None,
+    relative_period: RelativePeriod | None,
+    invalid: set[str],
+    unsupported: set[str],
+) -> FollowUp:
+    # A named and a relative period are two values for the same period.
+    if period is not None and relative_period is not None:
+        period = relative_period = None
+        unsupported.add("period")
+    return FollowUp(
+        category=category,
+        transaction_type=transaction_type,
+        period=period,
+        relative_period=relative_period,
         invalid_fields=frozenset(invalid),
         unsupported_fields=frozenset(unsupported),
     )

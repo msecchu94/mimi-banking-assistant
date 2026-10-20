@@ -77,6 +77,7 @@ class ScriptedLLMProvider:
                 "transaction_type",
                 "period",
                 "comparison_period",
+                "relative_period",
             ]
         )
         return output_type.model_validate({"intent": self.intent.value, **output})

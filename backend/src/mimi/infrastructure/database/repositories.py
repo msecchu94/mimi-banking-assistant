@@ -7,12 +7,19 @@ object leaves this module.
 """
 
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
+from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
 from sqlalchemy import CursorResult, Update, select, update
 from sqlalchemy.orm import Session
 
+from mimi.application.conversation_context import (
+    EMPTY_CONTEXT,
+    ConversationContext,
+    TemporalContext,
+)
+from mimi.application.interpretation import Intent, PeriodReference
 from mimi.application.repositories import ConversationRecord, TransactionQuery
 from mimi.domain.entities import (
     Account,
@@ -24,7 +31,7 @@ from mimi.domain.entities import (
     Transaction,
     Transfer,
 )
-from mimi.domain.enums import CardStatus
+from mimi.domain.enums import CardStatus, TransactionCategory, TransactionType
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
@@ -86,6 +93,73 @@ def _to_transaction(model: TransactionModel) -> Transaction:
     )
 
 
+class _StoredTemporalContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    period: PeriodReference
+    comparison_period: PeriodReference | None
+    anchored_at: AwareDatetime
+
+
+class _StoredContext(BaseModel):
+    """JSON representation of a non-empty ``ConversationContext``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    last_intent: Intent
+    category: TransactionCategory | None
+    transaction_type: TransactionType | None
+    temporal: _StoredTemporalContext | None
+
+
+def _context_to_json(context: ConversationContext) -> dict[str, Any]:
+    if context.last_intent is None:
+        return {}
+    temporal = context.temporal
+    return _StoredContext(
+        last_intent=context.last_intent,
+        category=context.category,
+        transaction_type=context.transaction_type,
+        temporal=(
+            None
+            if temporal is None
+            else _StoredTemporalContext(
+                period=temporal.period,
+                comparison_period=temporal.comparison_period,
+                anchored_at=temporal.anchored_at,
+            )
+        ),
+    ).model_dump(mode="json")
+
+
+def _context_from_json(data: dict[str, Any]) -> ConversationContext:
+    """Load a stored context; a malformed one loads as empty.
+
+    Context never holds financial truth, and a follow-up without context
+    executes no query, so an unreadable context fails safe.
+    """
+    if not data:
+        return EMPTY_CONTEXT
+    try:
+        stored = _StoredContext.model_validate(data)
+    except ValidationError:
+        return EMPTY_CONTEXT
+    temporal = stored.temporal
+    return ConversationContext(
+        last_intent=stored.last_intent,
+        category=stored.category,
+        transaction_type=stored.transaction_type,
+        temporal=(
+            None
+            if temporal is None
+            else TemporalContext(
+                temporal.period, temporal.comparison_period, temporal.anchored_at
+            )
+        ),
+    )
+
+
 def _to_conversation_record(model: ConversationModel) -> ConversationRecord:
     return ConversationRecord(
         conversation=Conversation(
@@ -96,6 +170,7 @@ def _to_conversation_record(model: ConversationModel) -> ConversationRecord:
             updated_at=model.updated_at,
         ),
         flow_state=model.flow_state,
+        context=_context_from_json(model.context),
     )
 
 
@@ -275,7 +350,7 @@ class PostgresConversationRepository:
                 created_at=conversation.created_at,
                 updated_at=conversation.updated_at,
                 flow_state=record.flow_state,
-                context={},
+                context=_context_to_json(record.context),
             )
         )
         self._session.flush()
@@ -299,6 +374,14 @@ class PostgresConversationRepository:
             update(ConversationModel)
             .where(ConversationModel.id == conversation_id)
             .values(updated_at=updated_at),
+        )
+
+    def save_context(self, conversation_id: UUID, context: ConversationContext) -> None:
+        _update_one(
+            self._session,
+            update(ConversationModel)
+            .where(ConversationModel.id == conversation_id)
+            .values(context=_context_to_json(context)),
         )
 
 

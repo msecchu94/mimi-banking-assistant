@@ -10,10 +10,17 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import BaseModel
 
+from mimi.application.conversation_context import (
+    EMPTY_CONTEXT,
+    ConversationContext,
+    TemporalContext,
+)
 from mimi.application.conversation_engine import ConversationEngine, Turn
 from mimi.application.conversation_results import (
     BalancesResult,
+    ExpenseAnalysisResult,
     IncompleteQueryResult,
+    TransactionsResult,
     UnhandledIntentResult,
 )
 from mimi.application.errors import (
@@ -22,9 +29,10 @@ from mimi.application.errors import (
     LLMInvalidResponseError,
     LLMUnavailableError,
 )
-from mimi.application.interpretation import Intent
+from mimi.application.interpretation import Intent, PeriodReference
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
 from mimi.application.repositories import ConversationRecord, TransactionQuery
+from mimi.application.use_cases.analyze_expenses import Period
 from mimi.application.use_cases.interpret_message import InterpretMessage
 from mimi.domain.entities import (
     Account,
@@ -42,6 +50,7 @@ from mimi.domain.enums import (
     ConversationStatus,
     Currency,
     MessageRole,
+    TransactionCategory,
 )
 
 BUENOS_AIRES = timezone(timedelta(hours=-3))
@@ -69,6 +78,7 @@ EMPTY_OUTPUT: dict[str, Any] = {
     "transaction_type": None,
     "period": None,
     "comparison_period": None,
+    "relative_period": None,
 }
 
 
@@ -99,6 +109,11 @@ class FakeConversationRepository:
         record = self.records[conversation_id]
         self.records[conversation_id] = replace(
             record, conversation=replace(record.conversation, updated_at=updated_at)
+        )
+
+    def save_context(self, conversation_id: UUID, context: ConversationContext) -> None:
+        self.records[conversation_id] = replace(
+            self.records[conversation_id], context=context
         )
 
 
@@ -147,9 +162,13 @@ class FakeBeneficiaryRepository:
 
 
 class FakeTransactionRepository:
+    def __init__(self) -> None:
+        self.queries: list[TransactionQuery] = []
+
     def list_by_customer(
         self, customer_id: UUID, query: TransactionQuery
     ) -> list[Transaction]:
+        self.queries.append(query)
         return []
 
 
@@ -523,3 +542,209 @@ def test_naive_clock_is_rejected(
     assert list(scope.repositories.conversations.records) == [record.conversation.id]
     assert scope.repositories.messages.messages == []
     assert llm.calls == []
+
+
+# NOW is Friday Oct 9th in Buenos Aires.
+SEPTEMBER = Period(
+    datetime(2026, 9, 1, tzinfo=BUENOS_AIRES),
+    datetime(2026, 10, 1, tzinfo=BUENOS_AIRES),
+)
+PREVIOUS_WEEK = Period(
+    datetime(2026, 9, 28, tzinfo=BUENOS_AIRES),
+    datetime(2026, 10, 5, tzinfo=BUENOS_AIRES),
+)
+PREVIOUS_PERIOD = model_output(intent="FOLLOW_UP", relative_period="PREVIOUS")
+
+
+def send(
+    engine: ConversationEngine,
+    llm: FakeLLMProvider,
+    conversation_id: UUID,
+    content: str,
+    output: dict[str, Any],
+) -> Turn:
+    llm.output = output
+    return engine.handle_message(CUSTOMER_ID, conversation_id, content)
+
+
+def stored_context(
+    scope: FakeTransactionScope, conversation_id: UUID
+) -> ConversationContext:
+    return scope.repositories.conversations.records[conversation_id].context
+
+
+def test_previous_period_follow_up_continues_expense_analysis(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    send(
+        engine,
+        llm,
+        conversation_id,
+        "¿En qué gasté más este mes?",
+        model_output(intent="ANALYZE_EXPENSES", period="CURRENT_MONTH"),
+    )
+
+    turn = send(engine, llm, conversation_id, "¿Y el anterior?", PREVIOUS_PERIOD)
+
+    assert turn.intent is Intent.ANALYZE_EXPENSES
+    assert isinstance(turn.result, ExpenseAnalysisResult)
+    assert turn.result.analysis.period == SEPTEMBER
+    assert stored_context(scope, conversation_id) == ConversationContext(
+        last_intent=Intent.ANALYZE_EXPENSES,
+        temporal=TemporalContext(PeriodReference.PREVIOUS_MONTH, None, NOW),
+    )
+
+
+def test_stated_period_follow_up_continues_transactions(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    send(
+        engine,
+        llm,
+        conversation_id,
+        "Mostrame mis movimientos de este mes en restaurantes.",
+        model_output(
+            intent="GET_TRANSACTIONS", period="CURRENT_MONTH", category="DINING"
+        ),
+    )
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "¿Y la semana pasada?",
+        model_output(intent="FOLLOW_UP", period="PREVIOUS_WEEK"),
+    )
+
+    assert turn.intent is Intent.GET_TRANSACTIONS
+    assert turn.result == TransactionsResult((), PREVIOUS_WEEK)
+    assert scope.repositories.transactions.queries[-1] == TransactionQuery(
+        occurred_from=PREVIOUS_WEEK.start,
+        occurred_to=PREVIOUS_WEEK.end,
+        category=TransactionCategory.DINING,
+    )
+
+
+def test_default_period_of_executed_query_is_kept_in_context(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    send(
+        engine,
+        llm,
+        conversation_id,
+        "¿Cuánto gasté en el super?",
+        model_output(intent="ANALYZE_EXPENSES", category="GROCERIES"),
+    )
+
+    assert stored_context(scope, conversation_id) == ConversationContext(
+        last_intent=Intent.ANALYZE_EXPENSES,
+        category=TransactionCategory.GROCERIES,
+        temporal=TemporalContext(PeriodReference.CURRENT_MONTH, None, NOW),
+    )
+
+
+def test_follow_up_without_context_executes_no_query(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+
+    turn = send(engine, llm, conversation_id, "¿Y el mes pasado?", PREVIOUS_PERIOD)
+
+    assert turn.intent is Intent.UNKNOWN
+    assert turn.result == IncompleteQueryResult(
+        Intent.UNKNOWN, missing_fields=frozenset({"context"})
+    )
+    assert scope.repositories.transactions.queries == []
+    assert scope.repositories.messages.messages == [turn.message]
+    assert stored_context(scope, conversation_id) == EMPTY_CONTEXT
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        model_output(intent="GENERAL_CONVERSATION"),
+        model_output(intent="UNKNOWN"),
+        model_output(intent="TRANSFER_MONEY", amount="25000"),
+        model_output(intent="GET_TRANSACTIONS", category="UNSUPPORTED"),
+        model_output(intent="COMPARE_EXPENSES"),
+        model_output(intent="FOLLOW_UP", transaction_type="CREDIT"),
+    ],
+    ids=["conversation", "unknown", "mutation", "unsupported", "incomplete", "follow"],
+)
+def test_turns_executing_no_query_keep_the_context(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    output: dict[str, Any],
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    send(
+        engine,
+        llm,
+        conversation_id,
+        "¿Cuánto gasté este mes?",
+        model_output(intent="ANALYZE_EXPENSES", period="CURRENT_MONTH"),
+    )
+    context = stored_context(scope, conversation_id)
+
+    send(engine, llm, conversation_id, "Something else.", output)
+
+    assert stored_context(scope, conversation_id) == context
+    turn = send(engine, llm, conversation_id, "¿Y el anterior?", PREVIOUS_PERIOD)
+    assert isinstance(turn.result, ExpenseAnalysisResult)
+    assert turn.result.analysis.period == SEPTEMBER
+
+
+def test_executed_query_replaces_the_context(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    send(
+        engine,
+        llm,
+        conversation_id,
+        "¿Cuánto gasté este mes en el super?",
+        model_output(
+            intent="ANALYZE_EXPENSES", period="CURRENT_MONTH", category="GROCERIES"
+        ),
+    )
+    send(
+        engine,
+        llm,
+        conversation_id,
+        "¿Cuánta plata tengo?",
+        model_output(intent="GET_BALANCE"),
+    )
+
+    turn = send(engine, llm, conversation_id, "¿Y el anterior?", PREVIOUS_PERIOD)
+
+    assert stored_context(scope, conversation_id) == ConversationContext(
+        last_intent=Intent.GET_BALANCE
+    )
+    assert turn.result == IncompleteQueryResult(
+        Intent.GET_BALANCE, unsupported_fields=frozenset({"period"})
+    )
+    assert len(scope.repositories.transactions.queries) == 1  # the first query only
+
+
+def test_follow_up_is_resolved_against_context_read_under_turn_lock(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    committed_meanwhile = ConversationContext(
+        last_intent=Intent.ANALYZE_EXPENSES,
+        category=TransactionCategory.DINING,
+        temporal=TemporalContext(PeriodReference.CURRENT_MONTH, None, NOW),
+    )
+    llm.on_call = lambda: replace_stored(
+        scope, conversation_id, context=committed_meanwhile
+    )
+
+    turn = send(engine, llm, conversation_id, "¿Y el anterior?", PREVIOUS_PERIOD)
+
+    assert isinstance(turn.result, ExpenseAnalysisResult)
+    assert turn.result.analysis.period == SEPTEMBER
+    assert turn.result.analysis.category is TransactionCategory.DINING

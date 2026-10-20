@@ -60,3 +60,29 @@ class Interpretation:
     comparison_period: PeriodReference | None = None
     invalid_fields: frozenset[str] = field(default_factory=frozenset)
     unsupported_fields: frozenset[str] = field(default_factory=frozenset)
+
+
+class RelativePeriod(StrEnum):
+    """A period stated relative to the one the conversation is about."""
+
+    PREVIOUS = "PREVIOUS"
+
+
+@dataclass(frozen=True)
+class FollowUp:
+    """Validated candidate continuation of the conversation's last query.
+
+    Carries only values stated in the message, e.g. "¿Y el anterior?" or "And
+    on groceries?". The intent and every unstated value come from the
+    conversation's context, so a ``FollowUp`` is never routed directly: it is
+    first resolved into an ``Interpretation``. ``relative_period`` is the
+    period relative to the one in context; it is never set together with
+    ``period``.
+    """
+
+    category: TransactionCategory | None = None
+    transaction_type: TransactionType | None = None
+    period: PeriodReference | None = None
+    relative_period: RelativePeriod | None = None
+    invalid_fields: frozenset[str] = field(default_factory=frozenset)
+    unsupported_fields: frozenset[str] = field(default_factory=frozenset)
