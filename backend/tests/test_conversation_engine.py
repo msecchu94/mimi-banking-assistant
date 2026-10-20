@@ -26,10 +26,15 @@ from mimi.application.conversation_results import (
 from mimi.application.errors import (
     ConversationClosedError,
     ConversationNotFoundError,
+    ConversationStateCorruptedError,
     LLMInvalidResponseError,
     LLMUnavailableError,
 )
 from mimi.application.interpretation import Intent, PeriodReference
+from mimi.application.pending_operations import (
+    PendingOperation,
+    TransferOperationData,
+)
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
 from mimi.application.repositories import ConversationRecord, TransactionQuery
 from mimi.application.use_cases.analyze_expenses import Period
@@ -50,6 +55,7 @@ from mimi.domain.enums import (
     ConversationStatus,
     Currency,
     MessageRole,
+    PendingOperationType,
     TransactionCategory,
 )
 
@@ -66,6 +72,15 @@ SAVINGS = Account(
     name="Caja de ahorro",
     balance=Money(Decimal("150000.50"), Currency.ARS),
     status=AccountStatus.ACTIVE,
+)
+
+PENDING_TRANSFER = PendingOperation(
+    PendingOperationType.TRANSFER,
+    TransferOperationData(
+        source_account_id=SAVINGS.id,
+        beneficiary_id=uuid4(),
+        amount=Money(Decimal("25000.00"), Currency.ARS),
+    ),
 )
 
 EMPTY_OUTPUT: dict[str, Any] = {
@@ -104,6 +119,18 @@ class FakeConversationRepository:
         if record is None or record.conversation.customer_id != customer_id:
             return None
         return record
+
+    def save_pending_operation(
+        self,
+        conversation_id: UUID,
+        flow_state: ConversationFlowState,
+        pending_operation: PendingOperation | None,
+    ) -> None:
+        self.records[conversation_id] = replace(
+            self.records[conversation_id],
+            flow_state=flow_state,
+            pending_operation=pending_operation,
+        )
 
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None:
         record = self.records[conversation_id]
@@ -377,7 +404,10 @@ def test_handle_message_reports_flow_state_read_under_turn_lock(
     record = store_conversation(scope)
     conversation_id = record.conversation.id
     llm.on_call = lambda: replace_stored(
-        scope, conversation_id, flow_state=ConversationFlowState.WAITING_CONFIRMATION
+        scope,
+        conversation_id,
+        flow_state=ConversationFlowState.WAITING_CONFIRMATION,
+        pending_operation=PENDING_TRANSFER,
     )
 
     turn = engine.handle_message(CUSTOMER_ID, conversation_id, "What's my balance?")
@@ -748,3 +778,55 @@ def test_follow_up_is_resolved_against_context_read_under_turn_lock(
     assert isinstance(turn.result, ExpenseAnalysisResult)
     assert turn.result.analysis.period == SEPTEMBER
     assert turn.result.analysis.category is TransactionCategory.DINING
+
+
+def test_read_only_turns_keep_the_pending_operation(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    replace_stored(
+        scope,
+        conversation_id,
+        flow_state=ConversationFlowState.WAITING_CONFIRMATION,
+        pending_operation=PENDING_TRANSFER,
+    )
+
+    turns = [
+        send(
+            engine,
+            llm,
+            conversation_id,
+            "¿Cuánto gasté este mes?",
+            model_output(intent="ANALYZE_EXPENSES", period="CURRENT_MONTH"),
+        ),
+        send(engine, llm, conversation_id, "¿Y el anterior?", PREVIOUS_PERIOD),
+    ]
+
+    stored = scope.repositories.conversations.records[conversation_id]
+    assert stored.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert stored.pending_operation == PENDING_TRANSFER
+    assert [turn.flow_state for turn in turns] == [
+        ConversationFlowState.WAITING_CONFIRMATION
+    ] * 2
+    assert isinstance(turns[1].result, ExpenseAnalysisResult)
+    assert turns[1].result.analysis.period == SEPTEMBER
+
+
+def test_corrupted_conversation_state_fails_before_interpretation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+
+    def corrupted(customer_id: UUID, conversation_id: UUID) -> NoReturn:
+        raise ConversationStateCorruptedError()
+
+    monkeypatch.setattr(scope.repositories.conversations, "get_for_update", corrupted)
+
+    with pytest.raises(ConversationStateCorruptedError):
+        engine.handle_message(CUSTOMER_ID, conversation_id, "¿Cuánta plata tengo?")
+
+    assert llm.calls == []
+    assert scope.repositories.messages.messages == []

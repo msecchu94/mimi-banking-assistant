@@ -14,6 +14,7 @@ from typing import Protocol
 from uuid import UUID
 
 from mimi.application.conversation_context import EMPTY_CONTEXT, ConversationContext
+from mimi.application.pending_operations import PendingOperation, check_pending_state
 from mimi.domain.entities import (
     Account,
     Beneficiary,
@@ -27,6 +28,7 @@ from mimi.domain.entities import (
 from mimi.domain.enums import (
     CardStatus,
     ConversationFlowState,
+    ConversationStatus,
     TransactionCategory,
     TransactionType,
 )
@@ -92,6 +94,15 @@ class ConversationRecord:
     conversation: Conversation
     flow_state: ConversationFlowState
     context: ConversationContext = EMPTY_CONTEXT
+    pending_operation: PendingOperation | None = None
+
+    def __post_init__(self) -> None:
+        check_pending_state(self.flow_state, self.pending_operation)
+        if (
+            self.conversation.status is ConversationStatus.CLOSED
+            and self.pending_operation is not None
+        ):
+            raise ValueError("a closed conversation has no pending operation")
 
 
 class ConversationRepository(Protocol):
@@ -102,7 +113,25 @@ class ConversationRepository(Protocol):
     def get_for_update(
         self, customer_id: UUID, conversation_id: UUID
     ) -> ConversationRecord | None:
-        """Return the owned conversation, locked until the current transaction ends."""
+        """Return the owned conversation, locked until the current transaction ends.
+
+        Raises ``ConversationStateCorruptedError`` when the persisted flow state
+        or pending operation is malformed or inconsistent.
+        """
+        ...
+
+    def save_pending_operation(
+        self,
+        conversation_id: UUID,
+        flow_state: ConversationFlowState,
+        pending_operation: PendingOperation | None,
+    ) -> None:
+        """Replace the flow state and pending operation together.
+
+        ``READY`` with ``None`` clears the operation. ``WAITING_CONFIRMATION``
+        may be saved only after the caller pre-validated the complete
+        operation. Raises ``ValueError`` when the state is inconsistent.
+        """
         ...
 
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None: ...
