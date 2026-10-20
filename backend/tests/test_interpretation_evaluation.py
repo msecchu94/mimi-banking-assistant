@@ -8,9 +8,15 @@ from pydantic import BaseModel, SecretStr
 
 import mimi.evaluation.__main__ as runner
 from mimi.application.errors import LLMInvalidResponseError, LLMUnavailableError
-from mimi.application.interpretation import Intent, Interpretation, PeriodReference
+from mimi.application.interpretation import (
+    FollowUp,
+    Intent,
+    Interpretation,
+    PeriodReference,
+    RelativePeriod,
+)
 from mimi.config import LLMProviderName, Settings
-from mimi.domain.enums import Currency
+from mimi.domain.enums import Currency, TransactionCategory
 from mimi.evaluation.interpretation import (
     CaseResult,
     CaseStatus,
@@ -19,6 +25,7 @@ from mimi.evaluation.interpretation import (
     ModelInfo,
     build_report,
     compute_metrics,
+    interpretation_to_json,
     load_dataset,
     metrics_by_tag,
     mismatched_fields,
@@ -35,6 +42,7 @@ EMPTY_OUTPUT: dict[str, Any] = {
     "transaction_type": None,
     "period": None,
     "comparison_period": None,
+    "relative_period": None,
 }
 
 MODEL = ModelInfo(provider="fake", name="fake-model")
@@ -90,7 +98,7 @@ def make_case(
 
 def result(
     expected: Interpretation,
-    actual: Interpretation | None,
+    actual: Interpretation | FollowUp | None,
     tags: tuple[str, ...] = ("en",),
 ) -> CaseResult:
     case = make_case(expected, tags)
@@ -301,6 +309,34 @@ def test_reports_every_mismatched_field() -> None:
     )
 
 
+def test_follow_up_mismatches_intent_and_every_differing_value() -> None:
+    expected = Interpretation(
+        intent=Intent.ANALYZE_EXPENSES,
+        category=TransactionCategory.DINING,
+        period=PeriodReference.PREVIOUS_MONTH,
+    )
+    actual = FollowUp(
+        category=TransactionCategory.DINING, relative_period=RelativePeriod.PREVIOUS
+    )
+
+    assert mismatched_fields(expected, actual) == ("intent", "period")
+
+
+def test_follow_up_is_serialized_with_a_marker_instead_of_an_intent() -> None:
+    follow_up = FollowUp(
+        category=TransactionCategory.DINING,
+        relative_period=RelativePeriod.PREVIOUS,
+        unsupported_fields=frozenset({"transaction_type"}),
+    )
+
+    assert interpretation_to_json(follow_up) == {
+        "follow_up": True,
+        "category": "DINING",
+        "relative_period": "PREVIOUS",
+        "unsupported_fields": ["transaction_type"],
+    }
+
+
 # Running cases
 
 
@@ -365,6 +401,38 @@ def test_reports_progress_and_fingerprints_instructions(tmp_path: Path) -> None:
 
 
 # Metrics
+
+
+def test_follow_up_results_fail_and_count_against_intent_accuracy(
+    tmp_path: Path,
+) -> None:
+    path = write_dataset(
+        tmp_path,
+        [
+            case_line(
+                id="context",
+                message="¿Y el mes pasado?",
+                tags=["es", "context-dependent"],
+                expected={"intent": "UNKNOWN"},
+            )
+        ],
+    )
+    llm = ScriptedLLMProvider(
+        {"¿Y el mes pasado?": {"intent": "FOLLOW_UP", "period": "PREVIOUS_MONTH"}}
+    )
+
+    run = run_evaluation(load_dataset(path), llm, MODEL)
+
+    [case_result] = run.results
+    assert case_result.status is CaseStatus.FAIL
+    assert case_result.actual == FollowUp(period=PeriodReference.PREVIOUS_MONTH)
+    assert case_result.mismatched_fields == ("intent", "period")
+    metrics = compute_metrics(run.results)
+    assert metrics.field_accuracy["intent"].correct == 0
+    assert metrics.field_accuracy["period"].correct == 0
+    assert metrics.field_accuracy["period"].total == 1
+    [failure] = build_report(run)["failures"]
+    assert failure["actual"] == {"follow_up": True, "period": "PREVIOUS_MONTH"}
 
 
 def test_errors_are_counted_but_excluded_from_quality_metrics() -> None:
@@ -468,7 +536,7 @@ def test_report_describes_run_metrics_failures_and_errors(tmp_path: Path) -> Non
     # Round-trips through JSON: no Decimal, enum or datetime objects remain.
     report = json.loads(json.dumps(report))
 
-    assert report["report_schema_version"] == 1
+    assert report["report_schema_version"] == 2
     assert report["dataset"]["version"] == "v3"
     assert report["dataset"]["case_count"] == 3
     assert report["model"] == {"provider": "fake", "name": "fake-model"}

@@ -8,7 +8,13 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from mimi.application.errors import LLMInvalidResponseError, LLMUnavailableError
-from mimi.application.interpretation import Intent, Interpretation, PeriodReference
+from mimi.application.interpretation import (
+    FollowUp,
+    Intent,
+    Interpretation,
+    PeriodReference,
+    RelativePeriod,
+)
 from mimi.application.use_cases.interpret_message import (
     MAX_REFERENCE_LENGTH,
     InterpretMessage,
@@ -26,6 +32,7 @@ EMPTY_OUTPUT: dict[str, Any] = {
     "transaction_type": None,
     "period": None,
     "comparison_period": None,
+    "relative_period": None,
 }
 
 ALL_FIELDS_OUTPUT: dict[str, Any] = {
@@ -71,7 +78,15 @@ class FakeLLMProvider:
 
 
 def interpret(output: dict[str, Any], message: str = "a message") -> Interpretation:
-    return InterpretMessage(FakeLLMProvider(output)).execute(message)
+    result = InterpretMessage(FakeLLMProvider(output)).execute(message)
+    assert isinstance(result, Interpretation)
+    return result
+
+
+def interpret_follow_up(output: dict[str, Any]) -> FollowUp:
+    result = InterpretMessage(FakeLLMProvider(output)).execute("¿Y el anterior?")
+    assert isinstance(result, FollowUp)
+    return result
 
 
 def test_transfer_keeps_amount_currency_and_beneficiary_reference() -> None:
@@ -299,6 +314,75 @@ def test_every_period_reference_is_kept_as_extracted(period: PeriodReference) ->
     )
 
 
+def test_follow_up_keeps_only_stated_contextual_values() -> None:
+    result = interpret_follow_up(model_output(intent="FOLLOW_UP", **ALL_FIELDS_OUTPUT))
+
+    assert result == FollowUp(
+        category=TransactionCategory.DINING,
+        transaction_type=TransactionType.DEBIT,
+        period=PeriodReference.CURRENT_MONTH,
+    )
+
+
+def test_follow_up_keeps_relative_period() -> None:
+    result = interpret_follow_up(
+        model_output(intent="FOLLOW_UP", relative_period="PREVIOUS")
+    )
+
+    assert result == FollowUp(relative_period=RelativePeriod.PREVIOUS)
+
+
+def test_follow_up_without_stated_values_is_empty() -> None:
+    assert interpret_follow_up(model_output(intent="FOLLOW_UP")) == FollowUp()
+
+
+def test_follow_up_with_named_and_relative_period_reports_period_unsupported() -> None:
+    result = interpret_follow_up(
+        model_output(
+            intent="FOLLOW_UP",
+            category="GROCERIES",
+            period="PREVIOUS_WEEK",
+            relative_period="PREVIOUS",
+        )
+    )
+
+    assert result == FollowUp(
+        category=TransactionCategory.GROCERIES,
+        unsupported_fields=frozenset({"period"}),
+    )
+
+
+@pytest.mark.parametrize("field_name", ["category", "period"])
+def test_follow_up_reports_unsupported_values(field_name: str) -> None:
+    result = interpret_follow_up(
+        model_output(intent="FOLLOW_UP", **{field_name: "UNSUPPORTED"})
+    )
+
+    assert result == FollowUp(unsupported_fields=frozenset({field_name}))
+
+
+def test_follow_up_drops_values_unrelated_to_context() -> None:
+    result = interpret_follow_up(
+        model_output(
+            intent="FOLLOW_UP",
+            amount="UNSUPPORTED",
+            currency="UNSUPPORTED",
+            comparison_period="UNSUPPORTED",
+            beneficiary_reference="Laura",
+            card_reference="x" * (MAX_REFERENCE_LENGTH + 1),
+        )
+    )
+
+    assert result == FollowUp()
+
+
+@pytest.mark.parametrize("intent", [Intent.GET_TRANSACTIONS, Intent.ANALYZE_EXPENSES])
+def test_relative_period_is_dropped_outside_follow_ups(intent: Intent) -> None:
+    result = interpret(model_output(intent=intent.value, relative_period="PREVIOUS"))
+
+    assert result == Interpretation(intent=intent)
+
+
 def test_generic_card_reference_is_kept_as_candidate() -> None:
     result = interpret(model_output(intent="FREEZE_CARD", card_reference="mi tarjeta"))
 
@@ -359,6 +443,8 @@ def test_instructions_define_every_intent() -> None:
     [call] = llm.calls
     for intent in Intent:
         assert f"- {intent.value}:" in call["instructions"]
+    assert "- FOLLOW_UP:" in call["instructions"]
+    assert "- relative_period:" in call["instructions"]
 
 
 def test_instructions_define_every_category_and_period_reference() -> None:

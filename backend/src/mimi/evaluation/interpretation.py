@@ -3,7 +3,10 @@
 Each case is interpreted end-to-end and compared field by field with its
 expected ``Interpretation``. A case PASSes on an exact match, FAILs otherwise
 and is an ERROR when the provider raises a known LLM error; errors are
-reported but excluded from quality metrics.
+reported but excluded from quality metrics. Messages are interpreted without
+conversation context, and expectations are always an ``Interpretation``, so
+a ``FollowUp`` result FAILs: it has no intent and none of its values are
+compared as matching.
 """
 
 import hashlib
@@ -20,7 +23,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from mimi.application.errors import LLMInvalidResponseError, LLMUnavailableError
-from mimi.application.interpretation import Intent, Interpretation, PeriodReference
+from mimi.application.interpretation import (
+    FollowUp,
+    Intent,
+    Interpretation,
+    PeriodReference,
+)
 from mimi.application.llm import LLMProvider
 from mimi.application.use_cases.interpret_message import (
     _ALLOWED_FIELDS,
@@ -28,7 +36,8 @@ from mimi.application.use_cases.interpret_message import (
 )
 from mimi.domain.enums import Currency, TransactionCategory, TransactionType
 
-REPORT_SCHEMA_VERSION = 1
+# 2: a failure's ``actual`` may be a follow-up, marked ``"follow_up": true``.
+REPORT_SCHEMA_VERSION = 2
 
 FIELDS: tuple[str, ...] = tuple(f.name for f in fields(Interpretation))
 _REFERENCE_FIELDS = frozenset({"beneficiary_reference", "card_reference"})
@@ -191,7 +200,7 @@ class CaseStatus(StrEnum):
 class CaseResult:
     case: EvaluationCase
     status: CaseStatus
-    actual: Interpretation | None = None
+    actual: Interpretation | FollowUp | None = None
     mismatched_fields: tuple[str, ...] = ()
     error_type: str | None = None
 
@@ -200,8 +209,9 @@ def _normalize_reference(value: str) -> str:
     return " ".join(value.split()).lower()
 
 
-def _field_value(interpretation: Interpretation, name: str) -> Any:
-    value = getattr(interpretation, name)
+def _field_value(interpretation: Interpretation | FollowUp, name: str) -> Any:
+    """The compared value of ``name``; a field a ``FollowUp`` lacks is unset."""
+    value = getattr(interpretation, name, None)
     if name in _REFERENCE_FIELDS and value is not None:
         return _normalize_reference(value)
     return value
@@ -212,9 +222,12 @@ def _is_set(value: Any) -> bool:
 
 
 def mismatched_fields(
-    expected: Interpretation, actual: Interpretation
+    expected: Interpretation, actual: Interpretation | FollowUp
 ) -> tuple[str, ...]:
-    """Fields whose values differ, comparing references normalized."""
+    """Fields whose values differ, comparing references normalized.
+
+    A ``FollowUp`` always mismatches ``intent``, which it does not carry.
+    """
     return tuple(
         name
         for name in FIELDS
@@ -281,7 +294,7 @@ def compute_metrics(results: Sequence[CaseResult]) -> Metrics:
             for r in scored
             if name == "intent"
             or _is_set(getattr(r.case.expected, name))
-            or _is_set(getattr(r.actual, name))
+            or _is_set(getattr(r.actual, name, None))
         ]
         correct = sum(1 for r in relevant if name not in r.mismatched_fields)
         field_accuracy[name] = FieldAccuracy(correct=correct, total=len(relevant))
@@ -363,10 +376,18 @@ def run_evaluation(
     )
 
 
-def interpretation_to_json(interpretation: Interpretation) -> dict[str, Any]:
-    """Serialize only set fields, in the dataset's ``expected`` format."""
+def interpretation_to_json(
+    interpretation: Interpretation | FollowUp,
+) -> dict[str, Any]:
+    """Serialize only set fields, in the dataset's ``expected`` format.
+
+    A ``FollowUp`` is marked with ``"follow_up": true`` instead of an intent.
+    """
     data: dict[str, Any] = {}
-    for name in FIELDS:
+    if isinstance(interpretation, FollowUp):
+        data["follow_up"] = True
+    for field_info in fields(interpretation):
+        name = field_info.name
         value = getattr(interpretation, name)
         if not _is_set(value):
             continue

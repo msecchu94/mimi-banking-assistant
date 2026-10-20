@@ -6,9 +6,21 @@ import pytest
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from mimi.application.conversation_context import (
+    EMPTY_CONTEXT,
+    ConversationContext,
+    TemporalContext,
+)
+from mimi.application.interpretation import Intent, PeriodReference
 from mimi.application.repositories import ConversationRecord
 from mimi.domain.entities import Conversation, Message
-from mimi.domain.enums import ConversationFlowState, ConversationStatus, MessageRole
+from mimi.domain.enums import (
+    ConversationFlowState,
+    ConversationStatus,
+    MessageRole,
+    TransactionCategory,
+    TransactionType,
+)
 from mimi.infrastructure.database.models import ConversationModel, CustomerModel
 from mimi.infrastructure.database.repositories import (
     PostgresConversationRepository,
@@ -165,6 +177,136 @@ def test_touch_updates_only_updated_at(
     assert touched.conversation.updated_at == later
     assert touched.conversation.created_at == STARTED_AT
     assert other == untouched
+
+
+CONTEXT = ConversationContext(
+    last_intent=Intent.COMPARE_EXPENSES,
+    category=TransactionCategory.DINING,
+    temporal=TemporalContext(
+        PeriodReference.CURRENT_MONTH,
+        PeriodReference.PREVIOUS_MONTH,
+        datetime(2026, 10, 9, 16, 31, 4, tzinfo=UTC),
+    ),
+)
+
+
+def load(
+    session_factory: sessionmaker[Session], customer_id: UUID, conversation_id: UUID
+) -> ConversationRecord | None:
+    with session_factory.begin() as session:
+        return PostgresConversationRepository(session).get_for_update(
+            customer_id, conversation_id
+        )
+
+
+def store_raw_context(
+    session_factory: sessionmaker[Session], conversation_id: UUID, raw: object
+) -> None:
+    with session_factory.begin() as session:
+        session.get_one(ConversationModel, conversation_id).context = raw  # type: ignore[assignment]
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        CONTEXT,
+        ConversationContext(
+            last_intent=Intent.GET_TRANSACTIONS,
+            transaction_type=TransactionType.CREDIT,
+        ),
+        ConversationContext(last_intent=Intent.GET_BALANCE),
+    ],
+)
+def test_saved_context_round_trips(
+    session_factory: sessionmaker[Session],
+    customers: Customers,
+    context: ConversationContext,
+) -> None:
+    record = make_record(customers.customer_id)
+    add_record(session_factory, record)
+
+    with session_factory.begin() as session:
+        PostgresConversationRepository(session).save_context(
+            record.conversation.id, context
+        )
+
+    loaded = load(session_factory, customers.customer_id, record.conversation.id)
+    assert loaded is not None
+    assert loaded.context == context
+    assert loaded.conversation == record.conversation
+    assert loaded.flow_state is record.flow_state
+
+
+def test_save_context_affects_only_its_conversation(
+    session_factory: sessionmaker[Session], customers: Customers
+) -> None:
+    record = make_record(customers.customer_id)
+    other = make_record(customers.customer_id)
+    add_record(session_factory, record)
+    add_record(session_factory, other)
+
+    with session_factory.begin() as session:
+        PostgresConversationRepository(session).save_context(
+            record.conversation.id, CONTEXT
+        )
+
+    assert load(session_factory, customers.customer_id, other.conversation.id) == other
+
+
+def test_saving_empty_context_stores_an_empty_object(
+    session_factory: sessionmaker[Session], customers: Customers
+) -> None:
+    record = make_record(customers.customer_id)
+    add_record(session_factory, record)
+
+    with session_factory.begin() as session:
+        repository = PostgresConversationRepository(session)
+        repository.save_context(record.conversation.id, CONTEXT)
+        repository.save_context(record.conversation.id, EMPTY_CONTEXT)
+
+    with session_factory() as session:
+        assert session.get_one(ConversationModel, record.conversation.id).context == {}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"version": 2, "last_intent": "GET_BALANCE"},
+        {"last_intent": "NOT_AN_INTENT"},
+        {"version": 1, "last_intent": "GET_BALANCE", "unexpected": True},
+        {
+            "version": 1,
+            "last_intent": "ANALYZE_EXPENSES",
+            "category": None,
+            "transaction_type": None,
+            "temporal": {
+                "period": "CURRENT_MONTH",
+                "comparison_period": None,
+                "anchored_at": "2026-10-09T13:00:00",
+            },
+        },
+    ],
+    ids=["version", "intent", "extra", "naive"],
+)
+def test_malformed_context_loads_as_empty(
+    session_factory: sessionmaker[Session], customers: Customers, raw: object
+) -> None:
+    record = make_record(customers.customer_id)
+    add_record(session_factory, record)
+    store_raw_context(session_factory, record.conversation.id, raw)
+
+    loaded = load(session_factory, customers.customer_id, record.conversation.id)
+
+    assert loaded is not None
+    assert loaded.context == EMPTY_CONTEXT
+
+
+def test_save_context_of_missing_conversation_fails(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with pytest.raises(RuntimeError, match="Expected to update one row"):
+        with session_factory.begin() as session:
+            PostgresConversationRepository(session).save_context(uuid4(), CONTEXT)
 
 
 def test_touch_of_missing_conversation_fails(

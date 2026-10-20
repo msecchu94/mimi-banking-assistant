@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from mimi.application.conversation_context import EMPTY_CONTEXT, ConversationContext
 from mimi.domain.entities import (
     Account,
     Beneficiary,
@@ -86,15 +87,16 @@ class TransferRepository(Protocol):
 
 @dataclass(frozen=True)
 class ConversationRecord:
-    """A Conversation together with its persisted conversational flow state."""
+    """A Conversation together with its persisted conversational state."""
 
     conversation: Conversation
     flow_state: ConversationFlowState
+    context: ConversationContext = EMPTY_CONTEXT
 
 
 class ConversationRepository(Protocol):
     def add(self, record: ConversationRecord) -> None:
-        """Persist a new conversation with empty context and no pending operation."""
+        """Persist a new conversation with no pending operation."""
         ...
 
     def get_for_update(
@@ -104,6 +106,10 @@ class ConversationRepository(Protocol):
         ...
 
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None: ...
+
+    def save_context(
+        self, conversation_id: UUID, context: ConversationContext
+    ) -> None: ...
 
 
 class MessageRepository(Protocol):
