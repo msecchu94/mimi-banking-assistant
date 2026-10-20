@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import NoReturn
+from typing import Any, NoReturn
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -214,6 +214,7 @@ class FakeRepositories:
         self.cards = FakeCardRepository(self.reads, data.cards)
         self.beneficiaries = FakeBeneficiaryRepository(self.reads, data.beneficiaries)
         self.transactions = FakeTransactionRepository(self.reads, data.transactions)
+        self.transfers: Any = None
         self.conversations = FakeConversationRepository()
         self.messages = FakeMessageRepository()
 

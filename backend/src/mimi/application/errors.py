@@ -90,6 +90,11 @@ class InvalidConversationStateError(ConflictError):
     )
 
 
+class InvalidInteractionError(ConflictError):
+    code = "INVALID_INTERACTION"
+    default_message = "This action is not available in the current conversation."
+
+
 class ConversationStateCorruptedError(Exception):
     """Persisted conversational state is malformed or inconsistent.
 

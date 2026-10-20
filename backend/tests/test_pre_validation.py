@@ -97,6 +97,7 @@ class FakeRepositories:
     beneficiaries: Any = field(default_factory=lambda: Lookup([LAURA]))
     cards: Any = field(default_factory=lambda: Lookup([ACTIVE_CARD, FROZEN_CARD]))
     transactions: Any = None
+    transfers: Any = None
     conversations: Any = None
     messages: Any = None
 

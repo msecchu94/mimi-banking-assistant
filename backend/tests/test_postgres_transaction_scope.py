@@ -7,14 +7,21 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from mimi.application.conversation_engine import ConversationEngine
-from mimi.application.conversation_results import BalancesResult
+from mimi.application.conversation_results import (
+    BalancesResult,
+    NoPendingOperationResult,
+    OperationCancelledResult,
+    OperationCompletedResult,
+)
 from mimi.application.errors import LLMUnavailableError
+from mimi.application.interactions import Cancel, Confirm
 from mimi.application.interpretation import Intent
 from mimi.application.llm import LLMProvider
+from mimi.application.pending_operations import PendingOperation, TransferOperationData
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
 from mimi.application.use_cases.interpret_message import (
     InterpretCollectionInput,
@@ -28,6 +35,7 @@ from mimi.domain.enums import (
     ConversationStatus,
     Currency,
     MessageRole,
+    PendingOperationType,
     TransactionCategory,
     TransactionType,
     TransferStatus,
@@ -248,6 +256,7 @@ def test_engine_turn_commits_message_and_activity_together(
         seed.customer_id, record.conversation.id, "Hello Mimi."
     )
 
+    assert turn.message is not None
     assert turn.flow_state is ConversationFlowState.READY
     assert stored_conversation(session_factory, record.conversation.id) == (
         EXECUTED_AT,
@@ -294,6 +303,7 @@ def test_container_engine_persists_conversation_turns(
         seed.customer_id, record.conversation.id, "What's my balance?"
     )
 
+    assert turn.message is not None
     with session_factory() as session:
         conversation = session.get_one(ConversationModel, record.conversation.id)
         message = session.get_one(MessageModel, turn.message.id)
@@ -315,6 +325,7 @@ def test_engine_answers_balance_from_persisted_accounts(
         seed.customer_id, record.conversation.id, "What's my balance?"
     )
 
+    assert turn.message is not None
     assert turn.intent is Intent.GET_BALANCE
     assert turn.result == BalancesResult(
         (
@@ -351,3 +362,83 @@ def test_engine_failed_interpretation_persists_no_message(
         record.conversation.updated_at,
         [],
     )
+
+
+def waiting_for_transfer(
+    session_factory: sessionmaker[Session], seed: Seed, engine: ConversationEngine
+) -> UUID:
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    with PostgresTransactionScope(session_factory).begin() as repositories:
+        repositories.conversations.save_pending_operation(
+            conversation_id,
+            ConversationFlowState.WAITING_CONFIRMATION,
+            PendingOperation(
+                PendingOperationType.TRANSFER,
+                TransferOperationData(
+                    seed.account_id, seed.beneficiary_id, TRANSFER_AMOUNT
+                ),
+            ),
+        )
+    return conversation_id
+
+
+def stored_flow(
+    session_factory: sessionmaker[Session], seed: Seed, conversation_id: UUID
+) -> tuple[ConversationFlowState, PendingOperation | None]:
+    with PostgresTransactionScope(session_factory).begin() as repositories:
+        record = repositories.conversations.get_for_update(
+            seed.customer_id, conversation_id
+        )
+        assert record is not None
+        return record.flow_state, record.pending_operation
+
+
+def test_engine_confirm_commits_the_transfer_and_clears_the_operation(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+
+    turn = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+    repeated = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+
+    assert isinstance(turn.result, OperationCompletedResult)
+    assert turn.result.transfer is not None
+    assert stored_state(session_factory, seed, turn.result.transfer.id) == (
+        Decimal("125000.50"),
+        True,
+        True,
+    )
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+    assert repeated.result == NoPendingOperationResult(Confirm())
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(TransferModel)) == 1
+
+
+def test_engine_cancel_clears_the_operation_without_financial_writes(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+
+    turn = engine.handle_interaction(seed.customer_id, conversation_id, Cancel())
+
+    assert isinstance(turn.result, OperationCancelledResult)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+    with session_factory() as session:
+        assert session.get_one(AccountModel, seed.account_id).balance == Decimal(
+            "150000.50"
+        )
+        assert session.scalar(select(func.count()).select_from(TransferModel)) == 0
+        assert session.scalar(select(func.count()).select_from(TransactionModel)) == 0
