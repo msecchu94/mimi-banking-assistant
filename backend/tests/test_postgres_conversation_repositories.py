@@ -453,6 +453,15 @@ PENDING_STATES: dict[str, PendingCase] = {
             TransferOperationData(refs.account_id, refs.beneficiary_id),
         ),
     ),
+    "transfer_unresolved_amount": lambda refs: (
+        COLLECTING_DATA,
+        PendingOperation(
+            PendingOperationType.TRANSFER,
+            TransferOperationData(
+                beneficiary_id=refs.beneficiary_id, unresolved_amount=Decimal("100")
+            ),
+        ),
+    ),
     "transfer_complete": lambda refs: (
         WAITING_CONFIRMATION,
         PendingOperation(
@@ -672,6 +681,12 @@ CORRUPTED_STATES: dict[str, CorruptedState] = {
         "pending_source_account_id": refs.account_id,
         "pending_beneficiary_id": refs.beneficiary_id,
         "pending_missing_fields": ["amount", "amount"],
+    },
+    "unresolved_amount_with_unlisted_field": lambda refs: {
+        "flow_state": COLLECTING_DATA,
+        "pending_operation_type": PendingOperationType.TRANSFER,
+        "pending_amount": Decimal("100.00"),
+        "pending_missing_fields": ["source_account_id", "amount"],
     },
     "partially_listed_transfer": lambda refs: {
         "flow_state": COLLECTING_DATA,

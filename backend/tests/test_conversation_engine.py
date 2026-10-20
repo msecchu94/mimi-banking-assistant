@@ -17,9 +17,14 @@ from mimi.application.conversation_context import (
 )
 from mimi.application.conversation_engine import ConversationEngine, Turn
 from mimi.application.conversation_results import (
+    AwaitingConfirmationResult,
     BalancesResult,
+    CollectingDataResult,
     ExpenseAnalysisResult,
+    FieldIssue,
     IncompleteQueryResult,
+    PendingOperationConflictResult,
+    PreValidationFailedResult,
     TransactionsResult,
     UnhandledIntentResult,
 )
@@ -27,18 +32,26 @@ from mimi.application.errors import (
     ConversationClosedError,
     ConversationNotFoundError,
     ConversationStateCorruptedError,
+    InsufficientFundsError,
+    InvalidCardStateError,
+    InvalidConversationStateError,
     LLMInvalidResponseError,
     LLMUnavailableError,
 )
 from mimi.application.interpretation import Intent, PeriodReference
 from mimi.application.pending_operations import (
+    FreezeCardOperationData,
+    PendingField,
     PendingOperation,
     TransferOperationData,
 )
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
 from mimi.application.repositories import ConversationRecord, TransactionQuery
 from mimi.application.use_cases.analyze_expenses import Period
-from mimi.application.use_cases.interpret_message import InterpretMessage
+from mimi.application.use_cases.interpret_message import (
+    InterpretCollectionInput,
+    InterpretMessage,
+)
 from mimi.domain.entities import (
     Account,
     Beneficiary,
@@ -50,7 +63,9 @@ from mimi.domain.entities import (
 )
 from mimi.domain.enums import (
     AccountStatus,
+    CardBrand,
     CardStatus,
+    CardType,
     ConversationFlowState,
     ConversationStatus,
     Currency,
@@ -99,6 +114,20 @@ EMPTY_OUTPUT: dict[str, Any] = {
 
 def model_output(**fields: Any) -> dict[str, Any]:
     return {**EMPTY_OUTPUT, **fields}
+
+
+EMPTY_COLLECTION_OUTPUT: dict[str, Any] = {
+    "kind": "DETAILS",
+    "amount": None,
+    "currency": None,
+    "beneficiary_reference": None,
+    "account_reference": None,
+    "card_reference": None,
+}
+
+
+def collection_output(**fields: Any) -> dict[str, Any]:
+    return {**EMPTY_COLLECTION_OUTPUT, **fields}
 
 
 def refuse_write(*args: object) -> NoReturn:
@@ -158,34 +187,51 @@ class FakeMessageRepository:
 class FakeAccountRepository:
     def __init__(self) -> None:
         self.accounts: list[Account] = []
+        self.locked: list[UUID] = []
 
     def list_by_customer(self, customer_id: UUID) -> list[Account]:
         return [a for a in self.accounts if a.customer_id == customer_id]
 
     def get_for_update(self, customer_id: UUID, account_id: UUID) -> Account | None:
-        refuse_write()
+        self.locked.append(account_id)
+        return next(
+            (a for a in self.list_by_customer(customer_id) if a.id == account_id), None
+        )
 
     def update_balance(self, account_id: UUID, balance: Money) -> None:
         refuse_write()
 
 
 class FakeCardRepository:
+    """Cards of ``CUSTOMER_ID``."""
+
+    def __init__(self) -> None:
+        self.cards: list[Card] = []
+
     def list_by_customer(self, customer_id: UUID) -> list[Card]:
-        return []
+        return list(self.cards) if customer_id == CUSTOMER_ID else []
 
     def get(self, customer_id: UUID, card_id: UUID) -> Card | None:
-        return None
+        return next(
+            (c for c in self.list_by_customer(customer_id) if c.id == card_id), None
+        )
 
     def update_status(self, card_id: UUID, status: CardStatus) -> None:
         refuse_write()
 
 
 class FakeBeneficiaryRepository:
+    def __init__(self) -> None:
+        self.beneficiaries: list[Beneficiary] = []
+
     def list_by_customer(self, customer_id: UUID) -> list[Beneficiary]:
-        return []
+        return [b for b in self.beneficiaries if b.customer_id == customer_id]
 
     def get(self, customer_id: UUID, beneficiary_id: UUID) -> Beneficiary | None:
-        return None
+        return next(
+            (b for b in self.list_by_customer(customer_id) if b.id == beneficiary_id),
+            None,
+        )
 
 
 class FakeTransactionRepository:
@@ -235,26 +281,35 @@ class FakeTransactionScope:
 
 class FakeLLMProvider:
     """Validates a canned payload against the requested schema and records
-    whether a database transaction was open when it was called."""
+    whether a database transaction was open when it was called.
+
+    ``output`` answers message interpretation and ``collection_output`` answers
+    collection interpretation, which by default is not collection input.
+    """
 
     def __init__(self, scope: FakeTransactionScope) -> None:
         self._scope = scope
         self.output = model_output(intent="GET_BALANCE")
+        self.collection_output = collection_output(kind="OTHER")
         self.error: Exception | None = None
         self.on_call: Callable[[], None] | None = None
         self.calls: list[str] = []
+        self.collection_calls: list[str] = []
         self.called_in_transaction: list[bool] = []
 
     def generate_structured[T: BaseModel](
         self, *, instructions: str, input_text: str, output_type: type[T]
     ) -> T:
-        self.calls.append(input_text)
+        collecting = "kind" in output_type.model_fields
+        (self.collection_calls if collecting else self.calls).append(input_text)
         self.called_in_transaction.append(self._scope.in_transaction)
         if self.on_call is not None:
             self.on_call()
         if self.error is not None:
             raise self.error
-        return output_type.model_validate(self.output)
+        return output_type.model_validate(
+            self.collection_output if collecting else self.output
+        )
 
 
 @pytest.fixture
@@ -277,6 +332,7 @@ def make_engine(
     return ConversationEngine(
         scope,
         interpreter=InterpretMessage(llm),
+        collection_interpreter=InterpretCollectionInput(llm),
         router=ReadOnlyQueryRouter(ZoneInfo("America/Argentina/Buenos_Aires")),
         clock=clock,
     )
@@ -418,10 +474,7 @@ def test_handle_message_reports_flow_state_read_under_turn_lock(
     assert stored.flow_state is ConversationFlowState.WAITING_CONFIRMATION
 
 
-@pytest.mark.parametrize(
-    "intent",
-    ["FREEZE_CARD", "UNFREEZE_CARD", "TRANSFER_MONEY", "GENERAL_CONVERSATION"],
-)
+@pytest.mark.parametrize("intent", ["GENERAL_CONVERSATION", "CANCEL", "UNKNOWN"])
 def test_handle_message_leaves_other_intents_unhandled(
     engine: ConversationEngine,
     scope: FakeTransactionScope,
@@ -829,4 +882,508 @@ def test_corrupted_conversation_state_fails_before_interpretation(
         engine.handle_message(CUSTOMER_ID, conversation_id, "¿Cuánta plata tengo?")
 
     assert llm.calls == []
+    assert scope.repositories.messages.messages == []
+
+
+# Data collection for state-changing operations.
+
+DOLLARS = Account(
+    id=uuid4(),
+    customer_id=CUSTOMER_ID,
+    name="Caja de ahorro en dólares",
+    balance=Money(Decimal("1200.00"), Currency.USD),
+    status=AccountStatus.ACTIVE,
+)
+
+
+def beneficiary(name: str) -> Beneficiary:
+    return Beneficiary(uuid4(), CUSTOMER_ID, name, "0000003100012345678901", None)
+
+
+LAURA = beneficiary("Laura Gómez")
+CARLOS = beneficiary("Carlos Díaz")
+JUAN_PEREZ = beneficiary("Juan Pérez")
+JUAN_GARCIA = beneficiary("Juan García")
+
+VISA_DEBIT = Card(
+    uuid4(), SAVINGS.id, CardType.DEBIT, CardBrand.VISA, "4821", CardStatus.ACTIVE
+)
+VISA_CREDIT = Card(
+    uuid4(), SAVINGS.id, CardType.CREDIT, CardBrand.VISA, "9134", CardStatus.FROZEN
+)
+
+TRANSFER_TO_LAURA = PendingOperation(
+    PendingOperationType.TRANSFER, TransferOperationData(SAVINGS.id, LAURA.id)
+)
+
+
+@pytest.fixture
+def banking(scope: FakeTransactionScope) -> FakeRepositories:
+    repositories = scope.repositories
+    repositories.beneficiaries.beneficiaries.extend(
+        [LAURA, CARLOS, JUAN_PEREZ, JUAN_GARCIA]
+    )
+    repositories.cards.cards.extend([VISA_DEBIT, VISA_CREDIT])
+    return repositories
+
+
+def collecting(
+    scope: FakeTransactionScope, operation: PendingOperation = TRANSFER_TO_LAURA
+) -> UUID:
+    conversation_id = store_conversation(scope).conversation.id
+    replace_stored(
+        scope,
+        conversation_id,
+        flow_state=ConversationFlowState.COLLECTING_DATA,
+        pending_operation=operation,
+    )
+    return conversation_id
+
+
+def reply(
+    engine: ConversationEngine,
+    llm: FakeLLMProvider,
+    conversation_id: UUID,
+    content: str,
+    output: dict[str, Any],
+) -> Turn:
+    llm.collection_output = output
+    return engine.handle_message(CUSTOMER_ID, conversation_id, content)
+
+
+def stored_state(
+    scope: FakeTransactionScope, conversation_id: UUID
+) -> tuple[ConversationFlowState, PendingOperation | None]:
+    record = scope.repositories.conversations.records[conversation_id]
+    return record.flow_state, record.pending_operation
+
+
+def test_incomplete_request_starts_collecting_resolved_data(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "Pasale plata a Laura",
+        model_output(intent="TRANSFER_MONEY", beneficiary_reference="Laura"),
+    )
+
+    assert turn.intent is Intent.TRANSFER_MONEY
+    assert turn.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert turn.result == CollectingDataResult(TRANSFER_TO_LAURA)
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        TRANSFER_TO_LAURA,
+    )
+    assert stored_context(scope, conversation_id) == EMPTY_CONTEXT
+    assert llm.collection_calls == []
+
+
+def test_contextual_answer_completes_and_pre_validates_transfer(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = collecting(scope)
+
+    turn = reply(
+        engine, llm, conversation_id, "25000", collection_output(amount="25000")
+    )
+
+    complete = PendingOperation(
+        PendingOperationType.TRANSFER,
+        TransferOperationData(
+            SAVINGS.id, LAURA.id, Money(Decimal("25000"), Currency.ARS)
+        ),
+    )
+    assert turn.intent is Intent.TRANSFER_MONEY
+    assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert turn.result == AwaitingConfirmationResult(
+        complete, source_account=SAVINGS, beneficiary=LAURA
+    )
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        complete,
+    )
+    assert llm.collection_calls == ["25000"]
+    assert llm.calls == []
+    assert banking.accounts.locked == [SAVINGS.id]
+
+
+def test_correction_replaces_resolved_field_and_keeps_the_rest(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = collecting(scope)
+
+    turn = reply(
+        engine,
+        llm,
+        conversation_id,
+        "Mejor mandáselo a Carlos",
+        collection_output(beneficiary_reference="Carlos"),
+    )
+
+    expected = PendingOperation(
+        PendingOperationType.TRANSFER, TransferOperationData(SAVINGS.id, CARLOS.id)
+    )
+    assert turn.result == CollectingDataResult(expected)
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        expected,
+    )
+
+
+def test_ambiguous_correction_clears_old_value_and_keeps_independent_data(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = collecting(scope)
+
+    turn = reply(
+        engine,
+        llm,
+        conversation_id,
+        "25000, pero a Juan",
+        collection_output(amount="25000", beneficiary_reference="Juan"),
+    )
+
+    expected = PendingOperation(
+        PendingOperationType.TRANSFER,
+        TransferOperationData(SAVINGS.id, None, Money(Decimal("25000"), Currency.ARS)),
+    )
+    assert turn.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert turn.result == CollectingDataResult(
+        expected,
+        {PendingField.BENEFICIARY_ID: FieldIssue.AMBIGUOUS},
+        beneficiary_candidates=(JUAN_PEREZ, JUAN_GARCIA),
+    )
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        expected,
+    )
+
+
+def test_ambiguous_request_collects_until_the_reference_is_clarified(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    first = send(
+        engine,
+        llm,
+        conversation_id,
+        "Transferile 20000 a Juan",
+        model_output(
+            intent="TRANSFER_MONEY", amount="20000", beneficiary_reference="Juan"
+        ),
+    )
+    assert first.flow_state is ConversationFlowState.COLLECTING_DATA
+    _, pending = stored_state(scope, conversation_id)
+    assert pending is not None
+    assert pending.missing_fields == (PendingField.BENEFICIARY_ID,)
+
+    second = reply(
+        engine,
+        llm,
+        conversation_id,
+        "Juan Pérez",
+        collection_output(beneficiary_reference="Juan Pérez"),
+    )
+
+    assert second.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert isinstance(second.result, AwaitingConfirmationResult)
+    assert second.result.beneficiary == JUAN_PEREZ
+
+
+def test_amount_waits_for_its_currency_until_an_account_is_selected(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    banking.accounts.accounts.append(DOLLARS)
+    conversation_id = store_conversation(scope).conversation.id
+
+    first = send(
+        engine,
+        llm,
+        conversation_id,
+        "Transfer 1000 to Laura",
+        model_output(
+            intent="TRANSFER_MONEY", amount="1000", beneficiary_reference="Laura"
+        ),
+    )
+
+    unresolved = PendingOperation(
+        PendingOperationType.TRANSFER,
+        TransferOperationData(None, LAURA.id, unresolved_amount=Decimal("1000")),
+    )
+    assert first.result == CollectingDataResult(unresolved)
+    assert unresolved.missing_fields == (
+        PendingField.SOURCE_ACCOUNT_ID,
+        PendingField.AMOUNT,
+    )
+
+    second = reply(
+        engine,
+        llm,
+        conversation_id,
+        "desde la cuenta en dólares",
+        collection_output(account_reference="la cuenta en dólares"),
+    )
+
+    assert second.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    _, pending = stored_state(scope, conversation_id)
+    assert pending is not None
+    assert pending.data == TransferOperationData(
+        DOLLARS.id, LAURA.id, Money(Decimal("1000"), Currency.USD)
+    )
+
+
+def test_card_operation_collects_an_ambiguous_card_and_pre_validates(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+
+    first = send(
+        engine,
+        llm,
+        conversation_id,
+        "Freeze my Visa",
+        model_output(intent="FREEZE_CARD", card_reference="my Visa"),
+    )
+
+    assert first.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert first.result == CollectingDataResult(
+        PendingOperation(PendingOperationType.FREEZE_CARD, FreezeCardOperationData()),
+        {PendingField.CARD_ID: FieldIssue.AMBIGUOUS},
+        card_candidates=(VISA_DEBIT, VISA_CREDIT),
+    )
+
+    second = reply(
+        engine,
+        llm,
+        conversation_id,
+        "la de débito",
+        collection_output(card_reference="la de débito"),
+    )
+
+    complete = PendingOperation(
+        PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_DEBIT.id)
+    )
+    assert second.intent is Intent.FREEZE_CARD
+    assert second.result == AwaitingConfirmationResult(complete, card=VISA_DEBIT)
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        complete,
+    )
+
+
+@pytest.mark.parametrize(
+    ("output", "error"),
+    [
+        (
+            model_output(intent="FREEZE_CARD", card_reference="la que termina en 9134"),
+            InvalidCardStateError,
+        ),
+        (
+            model_output(
+                intent="TRANSFER_MONEY",
+                amount="500000",
+                beneficiary_reference="Laura",
+            ),
+            InsufficientFundsError,
+        ),
+    ],
+    ids=["frozen_card", "insufficient_funds"],
+)
+def test_failed_pre_validation_discards_the_operation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+    output: dict[str, Any],
+    error: type[Exception],
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+
+    turn = send(engine, llm, conversation_id, "Do it now", output)
+
+    assert turn.flow_state is ConversationFlowState.READY
+    assert isinstance(turn.result, PreValidationFailedResult)
+    assert isinstance(turn.result.error, error)
+    assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
+
+
+def test_read_only_interruption_keeps_the_collected_operation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = collecting(scope)
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "¿Cuánta plata tengo?",
+        model_output(intent="GET_BALANCE"),
+    )
+
+    assert turn.result == BalancesResult((SAVINGS,))
+    assert turn.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        TRANSFER_TO_LAURA,
+    )
+    assert llm.collection_calls == ["¿Cuánta plata tengo?"]
+    assert llm.calls == ["¿Cuánta plata tengo?"]
+
+
+def test_restated_operation_is_merged_while_collecting(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = collecting(scope)
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "Transfer 30000 to Carlos",
+        model_output(
+            intent="TRANSFER_MONEY", amount="30000", beneficiary_reference="Carlos"
+        ),
+    )
+
+    assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert isinstance(turn.result, AwaitingConfirmationResult)
+    assert turn.result.beneficiary == CARLOS
+
+
+@pytest.mark.parametrize(
+    ("flow_state", "pending", "intent"),
+    [
+        (ConversationFlowState.COLLECTING_DATA, TRANSFER_TO_LAURA, "FREEZE_CARD"),
+        (ConversationFlowState.WAITING_CONFIRMATION, PENDING_TRANSFER, "FREEZE_CARD"),
+        (
+            ConversationFlowState.WAITING_CONFIRMATION,
+            PENDING_TRANSFER,
+            "TRANSFER_MONEY",
+        ),
+    ],
+    ids=["collecting", "waiting", "waiting_same_type"],
+)
+def test_second_operation_conflicts_with_the_pending_one(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+    flow_state: ConversationFlowState,
+    pending: PendingOperation,
+    intent: str,
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    replace_stored(
+        scope, conversation_id, flow_state=flow_state, pending_operation=pending
+    )
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "Freeze my Visa",
+        model_output(intent=intent, card_reference="my Visa"),
+    )
+
+    assert turn.result == PendingOperationConflictResult(Intent(intent), pending.type)
+    assert turn.flow_state is flow_state
+    assert stored_state(scope, conversation_id) == (flow_state, pending)
+
+
+@pytest.mark.parametrize("intent", ["CANCEL", "UNKNOWN", "GENERAL_CONVERSATION"])
+def test_other_messages_leave_the_collected_operation_unchanged(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+    intent: str,
+) -> None:
+    conversation_id = collecting(scope)
+
+    turn = send(engine, llm, conversation_id, "Dejá", model_output(intent=intent))
+
+    assert turn.result == UnhandledIntentResult(Intent(intent))
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        TRANSFER_TO_LAURA,
+    )
+
+
+def test_collection_interpretation_is_used_only_while_collecting(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    replace_stored(
+        scope,
+        conversation_id,
+        flow_state=ConversationFlowState.WAITING_CONFIRMATION,
+        pending_operation=PENDING_TRANSFER,
+    )
+    llm.collection_output = collection_output(amount="25000")
+
+    turn = send(engine, llm, conversation_id, "25000", model_output(intent="UNKNOWN"))
+
+    assert turn.result == UnhandledIntentResult(Intent.UNKNOWN)
+    assert llm.collection_calls == []
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        PENDING_TRANSFER,
+    )
+
+
+def test_operation_changed_during_interpretation_persists_nothing(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = collecting(scope)
+    changed = PendingOperation(
+        PendingOperationType.TRANSFER, TransferOperationData(SAVINGS.id, CARLOS.id)
+    )
+    llm.on_call = lambda: replace_stored(
+        scope, conversation_id, pending_operation=changed
+    )
+
+    with pytest.raises(InvalidConversationStateError):
+        reply(engine, llm, conversation_id, "25000", collection_output(amount="25000"))
+
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        changed,
+    )
     assert scope.repositories.messages.messages == []

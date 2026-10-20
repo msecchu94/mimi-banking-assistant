@@ -16,7 +16,10 @@ from mimi.application.errors import LLMUnavailableError
 from mimi.application.interpretation import Intent
 from mimi.application.llm import LLMProvider
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
-from mimi.application.use_cases.interpret_message import InterpretMessage
+from mimi.application.use_cases.interpret_message import (
+    InterpretCollectionInput,
+    InterpretMessage,
+)
 from mimi.composition import Container
 from mimi.domain.entities import Account, Message, Money, Transaction, Transfer
 from mimi.domain.enums import (
@@ -94,6 +97,7 @@ def make_engine(
     return ConversationEngine(
         PostgresTransactionScope(session_factory),
         interpreter=InterpretMessage(llm_provider),
+        collection_interpreter=InterpretCollectionInput(llm_provider),
         router=ReadOnlyQueryRouter(ZoneInfo("America/Argentina/Buenos_Aires")),
         clock=lambda: EXECUTED_AT,
     )

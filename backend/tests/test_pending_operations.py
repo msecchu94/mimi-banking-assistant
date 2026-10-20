@@ -56,6 +56,26 @@ PARTIAL_TRANSFER = PendingOperation(
         ),
         (COMPLETE_TRANSFER, ()),
         (
+            PendingOperation(
+                TRANSFER,
+                TransferOperationData(
+                    uuid4(), uuid4(), unresolved_amount=Decimal("25000")
+                ),
+            ),
+            (PendingField.AMOUNT,),
+        ),
+        (
+            PendingOperation(
+                TRANSFER,
+                TransferOperationData(unresolved_amount=Decimal("25000")),
+            ),
+            (
+                PendingField.SOURCE_ACCOUNT_ID,
+                PendingField.BENEFICIARY_ID,
+                PendingField.AMOUNT,
+            ),
+        ),
+        (
             PendingOperation(FREEZE_CARD, FreezeCardOperationData()),
             (PendingField.CARD_ID,),
         ),
@@ -98,6 +118,20 @@ def test_resolved_transfer_amount_must_be_valid(amount: str) -> None:
         TransferOperationData(amount=Money(Decimal(amount), Currency.ARS))
 
 
+@pytest.mark.parametrize(
+    "amount",
+    ["0", "0.00", "-50", "0.001", "25000.005", "NaN", "Infinity", "1E+16"],
+)
+def test_unresolved_transfer_amount_must_be_valid(amount: str) -> None:
+    with pytest.raises(ValueError, match="amount"):
+        TransferOperationData(unresolved_amount=Decimal(amount))
+
+
+def test_amount_is_either_resolved_or_unresolved() -> None:
+    with pytest.raises(ValueError, match="either"):
+        TransferOperationData(amount=AMOUNT, unresolved_amount=Decimal("25000"))
+
+
 @pytest.mark.parametrize("amount", ["0.01", "25000", "25000.50", "1.500"])
 def test_valid_transfer_amount_is_accepted(amount: str) -> None:
     data = TransferOperationData(amount=Money(Decimal(amount), Currency.USD))
@@ -130,6 +164,16 @@ def test_consistent_pending_states_are_accepted(
         (COLLECTING_DATA, COMPLETE_TRANSFER),
         (WAITING_CONFIRMATION, None),
         (WAITING_CONFIRMATION, PARTIAL_TRANSFER),
+        # An unresolved amount is a candidate, never confirmable data.
+        (
+            WAITING_CONFIRMATION,
+            PendingOperation(
+                TRANSFER,
+                TransferOperationData(
+                    uuid4(), uuid4(), unresolved_amount=Decimal("25000")
+                ),
+            ),
+        ),
     ],
 )
 def test_inconsistent_pending_states_are_rejected(
