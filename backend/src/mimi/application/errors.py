@@ -82,6 +82,15 @@ class ConversationClosedError(ConflictError):
     default_message = "The conversation is closed and cannot continue."
 
 
+class ConversationStateCorruptedError(Exception):
+    """Persisted conversational state is malformed or inconsistent.
+
+    Not an ``ApplicationError``: the client cannot act on it, so the API
+    reports it as an internal error. The state is never cleared or repaired
+    implicitly, so no operation proceeds from it.
+    """
+
+
 # LLM failures share the public SERVICE_UNAVAILABLE code: the client cannot act
 # differently on them, so the distinction stays internal.
 

@@ -19,7 +19,17 @@ from mimi.application.conversation_context import (
     ConversationContext,
     TemporalContext,
 )
+from mimi.application.errors import ConversationStateCorruptedError
 from mimi.application.interpretation import Intent, PeriodReference
+from mimi.application.pending_operations import (
+    FreezeCardOperationData,
+    PendingField,
+    PendingOperation,
+    PendingOperationData,
+    TransferOperationData,
+    UnfreezeCardOperationData,
+    check_pending_state,
+)
 from mimi.application.repositories import ConversationRecord, TransactionQuery
 from mimi.domain.entities import (
     Account,
@@ -31,7 +41,13 @@ from mimi.domain.entities import (
     Transaction,
     Transfer,
 )
-from mimi.domain.enums import CardStatus, TransactionCategory, TransactionType
+from mimi.domain.enums import (
+    CardStatus,
+    ConversationFlowState,
+    PendingOperationType,
+    TransactionCategory,
+    TransactionType,
+)
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
@@ -160,18 +176,95 @@ def _context_from_json(data: dict[str, Any]) -> ConversationContext:
     )
 
 
+def _pending_operation_columns(
+    pending_operation: PendingOperation | None,
+) -> dict[str, Any]:
+    """Values for every pending column; columns the operation does not use are
+    cleared."""
+    columns: dict[str, Any] = {
+        "pending_operation_type": None,
+        "pending_source_account_id": None,
+        "pending_beneficiary_id": None,
+        "pending_amount": None,
+        "pending_currency": None,
+        "pending_card_id": None,
+        "pending_missing_fields": None,
+    }
+    if pending_operation is None:
+        return columns
+    columns["pending_operation_type"] = pending_operation.type
+    columns["pending_missing_fields"] = [
+        field.value for field in pending_operation.missing_fields
+    ]
+    data = pending_operation.data
+    match data:
+        case TransferOperationData():
+            columns["pending_source_account_id"] = data.source_account_id
+            columns["pending_beneficiary_id"] = data.beneficiary_id
+            if data.amount is not None:
+                columns["pending_amount"] = data.amount.amount
+                columns["pending_currency"] = data.amount.currency
+        case FreezeCardOperationData() | UnfreezeCardOperationData():
+            columns["pending_card_id"] = data.card_id
+    return columns
+
+
+def _pending_operation_from_model(model: ConversationModel) -> PendingOperation | None:
+    """Load the pending operation; raise ``ValueError`` when its stored data or
+    missing fields are inconsistent."""
+    operation_type = model.pending_operation_type
+    if operation_type is None:
+        return None
+    data: PendingOperationData
+    match operation_type:
+        case PendingOperationType.TRANSFER:
+            amount = (
+                None
+                if model.pending_amount is None or model.pending_currency is None
+                else Money(model.pending_amount, model.pending_currency)
+            )
+            data = TransferOperationData(
+                source_account_id=model.pending_source_account_id,
+                beneficiary_id=model.pending_beneficiary_id,
+                amount=amount,
+            )
+        case PendingOperationType.FREEZE_CARD:
+            data = FreezeCardOperationData(card_id=model.pending_card_id)
+        case PendingOperationType.UNFREEZE_CARD:
+            data = UnfreezeCardOperationData(card_id=model.pending_card_id)
+    pending_operation = PendingOperation(operation_type, data)
+    stored = [PendingField(field) for field in model.pending_missing_fields or ()]
+    if len(stored) != len(set(stored)) or set(stored) != set(
+        pending_operation.missing_fields
+    ):
+        raise ValueError("stored missing fields do not match the operation data")
+    return pending_operation
+
+
 def _to_conversation_record(model: ConversationModel) -> ConversationRecord:
-    return ConversationRecord(
-        conversation=Conversation(
-            id=model.id,
-            customer_id=model.customer_id,
-            status=model.status,
-            created_at=model.created_at,
-            updated_at=model.updated_at,
-        ),
-        flow_state=model.flow_state,
-        context=_context_from_json(model.context),
-    )
+    """Map a stored conversation; raise ``ConversationStateCorruptedError`` when
+    its authoritative flow state or pending operation is inconsistent.
+
+    Unlike context, the pending operation is never dropped: discarding it would
+    silently change what the user is asked to confirm.
+    """
+    try:
+        return ConversationRecord(
+            conversation=Conversation(
+                id=model.id,
+                customer_id=model.customer_id,
+                status=model.status,
+                created_at=model.created_at,
+                updated_at=model.updated_at,
+            ),
+            flow_state=model.flow_state,
+            context=_context_from_json(model.context),
+            pending_operation=_pending_operation_from_model(model),
+        )
+    except ValueError as exc:
+        raise ConversationStateCorruptedError(
+            f"conversation {model.id} has inconsistent pending state"
+        ) from exc
 
 
 def _to_message(model: MessageModel) -> Message:
@@ -341,6 +434,8 @@ class PostgresConversationRepository:
         self._session = session
 
     def add(self, record: ConversationRecord) -> None:
+        if record.pending_operation is not None:
+            raise ValueError("a new conversation has no pending operation")
         conversation = record.conversation
         self._session.add(
             ConversationModel(
@@ -367,6 +462,23 @@ class PostgresConversationRepository:
             .with_for_update()
         ).one_or_none()
         return _to_conversation_record(model) if model else None
+
+    def save_pending_operation(
+        self,
+        conversation_id: UUID,
+        flow_state: ConversationFlowState,
+        pending_operation: PendingOperation | None,
+    ) -> None:
+        check_pending_state(flow_state, pending_operation)
+        _update_one(
+            self._session,
+            update(ConversationModel)
+            .where(ConversationModel.id == conversation_id)
+            .values(
+                flow_state=flow_state,
+                **_pending_operation_columns(pending_operation),
+            ),
+        )
 
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None:
         _update_one(

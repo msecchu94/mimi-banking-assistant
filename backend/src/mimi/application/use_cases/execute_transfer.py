@@ -1,8 +1,8 @@
 from collections.abc import Callable
 from datetime import datetime
-from decimal import Decimal
 from uuid import UUID, uuid4
 
+from mimi.application.amounts import is_valid_transfer_amount
 from mimi.application.errors import (
     AccountNotFoundError,
     BeneficiaryNotFoundError,
@@ -22,10 +22,6 @@ from mimi.domain.enums import (
     TransactionType,
     TransferStatus,
 )
-
-# Amounts must be exactly representable by the persisted NUMERIC(18, 2) columns.
-_CENT = Decimal("0.01")
-_AMOUNT_UPPER_BOUND = Decimal(10) ** 16
 
 
 class ExecuteTransfer:
@@ -60,7 +56,7 @@ class ExecuteTransfer:
         beneficiary_id: UUID,
         amount: Money,
     ) -> Transfer:
-        if not _is_valid_amount(amount.amount):
+        if not is_valid_transfer_amount(amount.amount):
             raise InvalidAmountError()
 
         account = self._accounts.get_for_update(customer_id, source_account_id)
@@ -105,11 +101,3 @@ class ExecuteTransfer:
         )
         self._transfers.add(transfer, transaction)
         return transfer
-
-
-def _is_valid_amount(amount: Decimal) -> bool:
-    return (
-        amount.is_finite()
-        and _CENT <= amount < _AMOUNT_UPPER_BOUND
-        and amount.quantize(_CENT) == amount
-    )

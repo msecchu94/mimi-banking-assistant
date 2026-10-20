@@ -29,6 +29,7 @@ from mimi.application.interpretation import (
     PeriodReference,
     RelativePeriod,
 )
+from mimi.application.pending_operations import PendingOperation
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
 from mimi.application.repositories import ConversationRecord, TransactionQuery
 from mimi.application.use_cases.analyze_expenses import Period
@@ -46,6 +47,7 @@ from mimi.domain.enums import (
     CardBrand,
     CardStatus,
     CardType,
+    ConversationFlowState,
     Currency,
     TransactionCategory,
     TransactionType,
@@ -172,6 +174,14 @@ class FakeConversationRepository:
         self, customer_id: UUID, conversation_id: UUID
     ) -> ConversationRecord | None:
         raise AssertionError("routing must not read conversations")
+
+    def save_pending_operation(
+        self,
+        conversation_id: UUID,
+        flow_state: ConversationFlowState,
+        pending_operation: PendingOperation | None,
+    ) -> None:
+        refuse_write()
 
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None:
         refuse_write()
