@@ -1,9 +1,9 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from mimi.application.conversation_context import ConversationContext
+from mimi.application.conversation_context import EMPTY_CONTEXT, ConversationContext
 from mimi.application.conversation_results import (
     AwaitingConfirmationResult,
     CollectingDataResult,
@@ -126,6 +126,32 @@ class ConversationEngine:
         with self._transaction_scope.begin() as repositories:
             repositories.conversations.add(record)
         return record
+
+    def close(self, customer_id: UUID, conversation_id: UUID) -> ConversationRecord:
+        """Close an owned ACTIVE conversation and return it.
+
+        Any pending operation is discarded without being executed, and the
+        context is cleared; messages are kept. Raises
+        ``ConversationNotFoundError`` when the conversation does not exist or is
+        not owned by the customer, and ``ConversationClosedError`` when it is
+        already CLOSED.
+        """
+        with self._transaction_scope.begin() as repositories:
+            record = _require_active(repositories, customer_id, conversation_id)
+            now = self._now()
+            conversations = repositories.conversations
+            conversations.save_pending_operation(
+                conversation_id, ConversationFlowState.READY, None
+            )
+            conversations.save_context(conversation_id, EMPTY_CONTEXT)
+            conversations.mark_closed(conversation_id)
+            conversations.touch(conversation_id, now)
+        return ConversationRecord(
+            conversation=replace(
+                record.conversation, status=ConversationStatus.CLOSED, updated_at=now
+            ),
+            flow_state=ConversationFlowState.READY,
+        )
 
     def handle_message(
         self, customer_id: UUID, conversation_id: UUID, content: str

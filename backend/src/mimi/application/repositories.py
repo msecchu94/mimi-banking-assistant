@@ -134,6 +134,11 @@ class ConversationRepository(Protocol):
         """
         ...
 
+    def mark_closed(self, conversation_id: UUID) -> None:
+        """Set the conversation's status to CLOSED; its pending operation must
+        already be cleared."""
+        ...
+
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None: ...
 
     def save_context(

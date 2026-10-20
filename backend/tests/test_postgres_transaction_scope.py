@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from mimi.application.conversation_context import EMPTY_CONTEXT
 from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.conversation_results import (
     BalancesResult,
@@ -17,7 +18,7 @@ from mimi.application.conversation_results import (
     OperationCancelledResult,
     OperationCompletedResult,
 )
-from mimi.application.errors import LLMUnavailableError
+from mimi.application.errors import ConversationClosedError, LLMUnavailableError
 from mimi.application.interactions import Cancel, Confirm
 from mimi.application.interpretation import Intent
 from mimi.application.llm import LLMProvider
@@ -442,3 +443,36 @@ def test_engine_cancel_clears_the_operation_without_financial_writes(
         )
         assert session.scalar(select(func.count()).select_from(TransferModel)) == 0
         assert session.scalar(select(func.count()).select_from(TransactionModel)) == 0
+
+
+def test_engine_close_discards_the_waiting_operation_without_executing_it(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+    message = engine.handle_message(seed.customer_id, conversation_id, "Saldo").message
+    assert message is not None
+
+    closed = engine.close(seed.customer_id, conversation_id)
+
+    with pytest.raises(ConversationClosedError):
+        engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+    with PostgresTransactionScope(session_factory).begin() as repositories:
+        stored = repositories.conversations.get_for_update(
+            seed.customer_id, conversation_id
+        )
+    assert stored == closed
+    assert stored.conversation.status is ConversationStatus.CLOSED
+    assert stored.pending_operation is None
+    assert stored.context == EMPTY_CONTEXT
+    assert stored_conversation(session_factory, conversation_id) == (
+        EXECUTED_AT,
+        [message.id],
+    )
+    with session_factory() as session:
+        assert session.get_one(AccountModel, seed.account_id).balance == Decimal(
+            "150000.50"
+        )
+        assert session.scalar(select(func.count()).select_from(TransferModel)) == 0
