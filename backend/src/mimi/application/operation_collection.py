@@ -8,7 +8,8 @@ value resolved earlier, while independently resolved values of the same turn
 are kept. Unstated fields keep their value.
 
 Resolution ignores account and card status; those rules belong to
-pre-validation.
+pre-validation. A card the user selected by identifier is resolved the same
+way: only an owned card becomes operation data.
 
 A transfer amount becomes ``Money`` only once its currency is determined:
 stated by the user, or the currency of the resolved source account.
@@ -117,6 +118,30 @@ def collect_operation(
             return _collect_card(
                 repositories, customer_id, operation_type, card_id, stated
             )
+
+
+def select_card(
+    repositories: Repositories,
+    customer_id: UUID,
+    operation_type: PendingOperationType,
+    card_id: UUID,
+) -> CollectingDataResult:
+    """Set the card of a card operation to the card the user selected.
+
+    Only an owned card becomes operation data; otherwise the card is missing
+    and reported as not found. Its status is a pre-validation rule.
+    """
+    if operation_type is PendingOperationType.TRANSFER:
+        raise ValueError(f"{operation_type} has no card")
+    card = repositories.cards.get(customer_id, card_id)
+    selected = None if card is None else card.id
+    data = (
+        FreezeCardOperationData(selected)
+        if operation_type is PendingOperationType.FREEZE_CARD
+        else UnfreezeCardOperationData(selected)
+    )
+    issues = {} if card is not None else {PendingField.CARD_ID: FieldIssue.NOT_FOUND}
+    return CollectingDataResult(PendingOperation(operation_type, data), issues)
 
 
 def match_beneficiaries(

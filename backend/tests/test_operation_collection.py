@@ -16,6 +16,7 @@ from mimi.application.operation_collection import (
     match_accounts,
     match_beneficiaries,
     match_cards,
+    select_card,
 )
 from mimi.application.pending_operations import (
     FreezeCardOperationData,
@@ -82,12 +83,17 @@ def usd(amount: str) -> Money:
     return Money(Decimal(amount), Currency.USD)
 
 
-class Records[T]:
+class Records[T: Account | Beneficiary | Card]:
     def __init__(self, records: list[T]) -> None:
         self.records = records
 
     def list_by_customer(self, customer_id: UUID) -> list[T]:
         return list(self.records) if customer_id == CUSTOMER_ID else []
+
+    def get(self, customer_id: UUID, record_id: UUID) -> T | None:
+        return next(
+            (r for r in self.list_by_customer(customer_id) if r.id == record_id), None
+        )
 
 
 @dataclass
@@ -102,6 +108,7 @@ class FakeRepositories:
         default_factory=lambda: Records([VISA_DEBIT, VISA_CREDIT, MASTERCARD])
     )
     transactions: Any = None
+    transfers: Any = None
     conversations: Any = None
     messages: Any = None
 
@@ -503,6 +510,45 @@ def test_card_operation_without_reference_keeps_the_card() -> None:
     )
 
     assert result.operation.data == data
+
+
+@pytest.mark.parametrize(
+    ("operation_type", "data_type"),
+    [
+        (PendingOperationType.FREEZE_CARD, FreezeCardOperationData),
+        (PendingOperationType.UNFREEZE_CARD, UnfreezeCardOperationData),
+    ],
+)
+def test_selected_owned_card_becomes_the_card(
+    operation_type: PendingOperationType,
+    data_type: type[FreezeCardOperationData | UnfreezeCardOperationData],
+) -> None:
+    result = select_card(FakeRepositories(), CUSTOMER_ID, operation_type, MASTERCARD.id)
+
+    assert result == CollectingDataResult(
+        PendingOperation(operation_type, data_type(MASTERCARD.id))
+    )
+
+
+@pytest.mark.parametrize(
+    ("customer_id", "card_id"),
+    [(CUSTOMER_ID, uuid4()), (uuid4(), VISA_DEBIT.id)],
+    ids=["unknown", "not_owned"],
+)
+def test_selected_card_must_be_owned(customer_id: UUID, card_id: UUID) -> None:
+    result = select_card(
+        FakeRepositories(), customer_id, PendingOperationType.FREEZE_CARD, card_id
+    )
+
+    assert result == CollectingDataResult(
+        PendingOperation(PendingOperationType.FREEZE_CARD, FreezeCardOperationData()),
+        {PendingField.CARD_ID: FieldIssue.NOT_FOUND},
+    )
+
+
+def test_a_transfer_has_no_card_to_select() -> None:
+    with pytest.raises(ValueError, match="no card"):
+        select_card(FakeRepositories(), CUSTOMER_ID, TRANSFER, VISA_DEBIT.id)
 
 
 def test_operation_data_must_match_the_operation_type() -> None:

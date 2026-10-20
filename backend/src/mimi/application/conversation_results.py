@@ -5,11 +5,19 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from mimi.application.errors import ApplicationError
+from mimi.application.interactions import Cancel, Confirm
 from mimi.application.interpretation import Intent
 from mimi.application.pending_operations import PendingField, PendingOperation
 from mimi.application.use_cases.analyze_expenses import ExpenseAnalysis, Period
 from mimi.application.use_cases.compare_expenses import ExpenseComparison
-from mimi.domain.entities import Account, Beneficiary, Card, Money, Transaction
+from mimi.domain.entities import (
+    Account,
+    Beneficiary,
+    Card,
+    Money,
+    Transaction,
+    Transfer,
+)
 from mimi.domain.enums import Currency, PendingOperationType
 
 
@@ -124,6 +132,41 @@ class PreValidationFailedResult:
 
 
 @dataclass(frozen=True)
+class OperationCompletedResult:
+    """A confirmed operation that passed revalidation and was executed; a
+    transfer sets ``transfer``, a card operation sets ``card`` with its new
+    status."""
+
+    operation: PendingOperation
+    transfer: Transfer | None = None
+    card: Card | None = None
+
+
+@dataclass(frozen=True)
+class OperationFailedResult:
+    """A confirmed operation that failed revalidation; nothing was executed and
+    the operation was discarded."""
+
+    operation: PendingOperation
+    error: ApplicationError
+
+
+@dataclass(frozen=True)
+class OperationCancelledResult:
+    """A pending operation the user cancelled; nothing was executed."""
+
+    operation: PendingOperation
+
+
+@dataclass(frozen=True)
+class NoPendingOperationResult:
+    """A confirmation or cancellation with no pending operation; it had no
+    effect."""
+
+    interaction: Confirm | Cancel
+
+
+@dataclass(frozen=True)
 class PendingOperationConflictResult:
     """A state-changing request that was not started because another
     operation is pending; the pending operation is unchanged."""
@@ -144,5 +187,9 @@ type TurnResult = (
     | CollectingDataResult
     | AwaitingConfirmationResult
     | PreValidationFailedResult
+    | OperationCompletedResult
+    | OperationFailedResult
+    | OperationCancelledResult
+    | NoPendingOperationResult
     | PendingOperationConflictResult
 )

@@ -165,6 +165,9 @@ class Repositories(Protocol):
     def transactions(self) -> TransactionRepository: ...
 
     @property
+    def transfers(self) -> TransferRepository: ...
+
+    @property
     def conversations(self) -> ConversationRepository: ...
 
     @property
