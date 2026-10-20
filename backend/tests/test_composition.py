@@ -8,7 +8,10 @@ from mimi.api.app import create_app
 from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.llm import LLMProvider
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
-from mimi.application.use_cases.interpret_message import InterpretMessage
+from mimi.application.use_cases.interpret_message import (
+    InterpretCollectionInput,
+    InterpretMessage,
+)
 from mimi.composition import Container, build_container, build_llm_provider
 from mimi.config import Settings
 from mimi.infrastructure.llm.openai_provider import OpenAILLMProvider
@@ -55,6 +58,8 @@ def test_container_wires_conversation_engine_interpreter_and_router(
 
     assert isinstance(engine._interpreter, InterpretMessage)
     assert engine._interpreter._llm is llm_provider
+    assert isinstance(engine._collection_interpreter, InterpretCollectionInput)
+    assert engine._collection_interpreter._llm is llm_provider
     assert isinstance(engine._router, ReadOnlyQueryRouter)
     assert engine._router._timezone == test_settings.timezone
 

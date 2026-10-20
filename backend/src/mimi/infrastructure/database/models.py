@@ -249,8 +249,15 @@ class ConversationModel(Base):
             name="pending_data_matches_type",
         ),
         CheckConstraint(
-            "(pending_amount IS NULL) = (pending_currency IS NULL)",
-            name="pending_amount_has_currency",
+            "pending_currency IS NULL OR pending_amount IS NOT NULL",
+            name="pending_currency_has_amount",
+        ),
+        # An amount without currency is an unresolved candidate, so the amount
+        # is still missing.
+        CheckConstraint(
+            "pending_amount IS NULL OR pending_currency IS NOT NULL "
+            f"OR '{PendingField.AMOUNT.value}' = ANY(pending_missing_fields)",
+            name="unresolved_amount_is_missing",
         ),
         CheckConstraint(
             "pending_amount IS NULL OR pending_amount > 0",

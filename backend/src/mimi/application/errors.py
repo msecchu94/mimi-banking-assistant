@@ -82,6 +82,14 @@ class ConversationClosedError(ConflictError):
     default_message = "The conversation is closed and cannot continue."
 
 
+class InvalidConversationStateError(ConflictError):
+    code = "INVALID_CONVERSATION_STATE"
+    default_message = (
+        "The conversation changed while the message was being handled. "
+        "Please try again."
+    )
+
+
 class ConversationStateCorruptedError(Exception):
     """Persisted conversational state is malformed or inconsistent.
 

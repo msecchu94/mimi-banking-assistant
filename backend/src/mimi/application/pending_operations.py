@@ -1,12 +1,14 @@
 """The state-changing operation pending in one active Conversation.
 
 Operation data holds only resolved, valid values, so a required field is
-missing exactly when it is unset. Completeness does not imply pre-validation:
-only the caller that pre-validated a complete operation may place it in
-``WAITING_CONFIRMATION``.
+missing exactly when it is unset. A transfer's unresolved amount is a
+candidate, not a resolved value: the amount stays missing. Completeness does
+not imply pre-validation: only the caller that pre-validated a complete
+operation may place it in ``WAITING_CONFIRMATION``.
 """
 
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
@@ -26,13 +28,23 @@ class PendingField(StrEnum):
 
 @dataclass(frozen=True)
 class TransferOperationData:
+    """``unresolved_amount`` is a valid amount the user stated before its
+    currency could be determined. It is a candidate, not resolved data: the
+    amount stays missing until it becomes ``amount``."""
+
     source_account_id: UUID | None = None
     beneficiary_id: UUID | None = None
     amount: Money | None = None
+    unresolved_amount: Decimal | None = None
 
     def __post_init__(self) -> None:
         if self.amount is not None and not is_valid_transfer_amount(self.amount.amount):
             raise ValueError("a resolved transfer amount must be valid")
+        if self.unresolved_amount is not None:
+            if self.amount is not None:
+                raise ValueError("an amount is either resolved or unresolved")
+            if not is_valid_transfer_amount(self.unresolved_amount):
+                raise ValueError("an unresolved transfer amount must be valid")
 
     @property
     def missing_fields(self) -> tuple[PendingField, ...]:

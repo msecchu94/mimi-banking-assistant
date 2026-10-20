@@ -204,6 +204,9 @@ def _pending_operation_columns(
             if data.amount is not None:
                 columns["pending_amount"] = data.amount.amount
                 columns["pending_currency"] = data.amount.currency
+            elif data.unresolved_amount is not None:
+                # An amount without currency is the unresolved candidate.
+                columns["pending_amount"] = data.unresolved_amount
         case FreezeCardOperationData() | UnfreezeCardOperationData():
             columns["pending_card_id"] = data.card_id
     return columns
@@ -218,15 +221,19 @@ def _pending_operation_from_model(model: ConversationModel) -> PendingOperation 
     data: PendingOperationData
     match operation_type:
         case PendingOperationType.TRANSFER:
-            amount = (
-                None
-                if model.pending_amount is None or model.pending_currency is None
-                else Money(model.pending_amount, model.pending_currency)
-            )
+            if model.pending_amount is None and model.pending_currency is not None:
+                raise ValueError("a stored currency requires an amount")
+            resolved = model.pending_currency is not None
             data = TransferOperationData(
                 source_account_id=model.pending_source_account_id,
                 beneficiary_id=model.pending_beneficiary_id,
-                amount=amount,
+                amount=(
+                    Money(model.pending_amount, model.pending_currency)
+                    if model.pending_amount is not None
+                    and model.pending_currency is not None
+                    else None
+                ),
+                unresolved_amount=None if resolved else model.pending_amount,
             )
         case PendingOperationType.FREEZE_CARD:
             data = FreezeCardOperationData(card_id=model.pending_card_id)

@@ -7,6 +7,7 @@ from mimi.application.errors import (
     ConversationClosedError,
     ConversationNotFoundError,
     DependencyUnavailableError,
+    InvalidConversationStateError,
     LLMInvalidResponseError,
     LLMUnavailableError,
     NotFoundError,
@@ -63,6 +64,11 @@ def test_llm_errors_are_dependency_unavailable_with_public_code(
     [
         (ConversationNotFoundError, NotFoundError, "CONVERSATION_NOT_FOUND"),
         (ConversationClosedError, ConflictError, "CONVERSATION_CLOSED"),
+        (
+            InvalidConversationStateError,
+            ConflictError,
+            "INVALID_CONVERSATION_STATE",
+        ),
     ],
 )
 def test_conversation_errors_use_public_codes(

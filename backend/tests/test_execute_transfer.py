@@ -61,11 +61,13 @@ class FakeAccountRepository:
 class FakeBeneficiaryRepository:
     def __init__(self, beneficiaries: list[Beneficiary]) -> None:
         self._beneficiaries = {b.id: b for b in beneficiaries}
+        self.reads = 0
 
     def list_by_customer(self, customer_id: UUID) -> list[Beneficiary]:
         raise AssertionError("transfer execution must not list beneficiaries")
 
     def get(self, customer_id: UUID, beneficiary_id: UUID) -> Beneficiary | None:
+        self.reads += 1
         beneficiary = self._beneficiaries.get(beneficiary_id)
         if beneficiary is None or beneficiary.customer_id != customer_id:
             return None
@@ -248,6 +250,7 @@ def test_rejects_unknown_source_account(harness: Harness) -> None:
         harness.execute(ars("100.00"), source_account_id=uuid4())
 
     harness.assert_no_writes()
+    assert harness.beneficiaries.reads == 0
 
 
 def test_rejects_source_account_owned_by_another_customer() -> None:
