@@ -183,6 +183,9 @@ class FakeConversationRepository:
     ) -> None:
         refuse_write()
 
+    def mark_closed(self, conversation_id: UUID) -> None:
+        refuse_write()
+
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None:
         refuse_write()
 

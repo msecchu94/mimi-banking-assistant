@@ -44,6 +44,7 @@ from mimi.domain.entities import (
 from mimi.domain.enums import (
     CardStatus,
     ConversationFlowState,
+    ConversationStatus,
     PendingOperationType,
     TransactionCategory,
     TransactionType,
@@ -485,6 +486,14 @@ class PostgresConversationRepository:
                 flow_state=flow_state,
                 **_pending_operation_columns(pending_operation),
             ),
+        )
+
+    def mark_closed(self, conversation_id: UUID) -> None:
+        _update_one(
+            self._session,
+            update(ConversationModel)
+            .where(ConversationModel.id == conversation_id)
+            .values(status=ConversationStatus.CLOSED),
         )
 
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None:

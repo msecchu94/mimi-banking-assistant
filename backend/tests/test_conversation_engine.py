@@ -180,6 +180,13 @@ class FakeConversationRepository:
             pending_operation=pending_operation,
         )
 
+    def mark_closed(self, conversation_id: UUID) -> None:
+        record = self.records[conversation_id]
+        self.records[conversation_id] = replace(
+            record,
+            conversation=replace(record.conversation, status=ConversationStatus.CLOSED),
+        )
+
     def touch(self, conversation_id: UUID, updated_at: datetime) -> None:
         record = self.records[conversation_id]
         self.records[conversation_id] = replace(
@@ -1829,3 +1836,65 @@ def test_cancel_during_interpretation_rejects_the_collected_data(
 
     assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
     assert scope.repositories.messages.messages == []
+
+
+# Closing.
+
+
+@pytest.mark.parametrize(
+    ("flow_state", "operation"),
+    [
+        (ConversationFlowState.READY, None),
+        (ConversationFlowState.COLLECTING_DATA, TRANSFER_TO_LAURA),
+        (ConversationFlowState.WAITING_CONFIRMATION, LAURA_25000),
+    ],
+    ids=["ready", "collecting", "waiting"],
+)
+def test_close_discards_pending_state_and_context_and_keeps_messages(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+    flow_state: ConversationFlowState,
+    operation: PendingOperation | None,
+) -> None:
+    # Banking Core writes are refused by the fakes.
+    conversation_id = in_state(scope, flow_state, operation)
+    send(engine, llm, conversation_id, "Saldo", model_output(intent="GET_BALANCE"))
+    assert stored_context(scope, conversation_id) != EMPTY_CONTEXT
+    messages = list(scope.repositories.messages.messages)
+    llm.error = AssertionError("closing must not interpret")
+
+    closed = engine.close(CUSTOMER_ID, conversation_id)
+
+    stored = scope.repositories.conversations.records[conversation_id]
+    assert closed == stored
+    assert stored.conversation.status is ConversationStatus.CLOSED
+    assert stored.conversation.updated_at == NOW
+    assert stored.flow_state is ConversationFlowState.READY
+    assert stored.pending_operation is None
+    assert stored.context == EMPTY_CONTEXT
+    assert scope.repositories.messages.messages == messages
+
+
+@pytest.mark.parametrize(
+    ("status", "customer_id", "error"),
+    [
+        (ConversationStatus.CLOSED, CUSTOMER_ID, ConversationClosedError),
+        (ConversationStatus.ACTIVE, OTHER_CUSTOMER_ID, ConversationNotFoundError),
+    ],
+    ids=["already_closed", "not_owned"],
+)
+def test_close_requires_an_owned_active_conversation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    status: ConversationStatus,
+    customer_id: UUID,
+    error: type[Exception],
+) -> None:
+    record = store_conversation(scope, status=status, customer_id=customer_id)
+
+    with pytest.raises(error):
+        engine.close(CUSTOMER_ID, record.conversation.id)
+
+    assert scope.repositories.conversations.records[record.conversation.id] == record

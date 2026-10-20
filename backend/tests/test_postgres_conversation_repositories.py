@@ -6,7 +6,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from mimi.application.conversation_context import (
@@ -155,6 +156,56 @@ def test_closed_conversation_is_loaded_with_its_status(
         )
 
     assert loaded == record
+
+
+def test_get_for_update_locks_conversation_until_transaction_ends(
+    session_factory: sessionmaker[Session], customers: Customers
+) -> None:
+    record = make_record(customers.customer_id)
+    add_record(session_factory, record)
+    locked_row = (
+        select(ConversationModel)
+        .where(ConversationModel.id == record.conversation.id)
+        .with_for_update(nowait=True)
+    )
+
+    with session_factory() as holder, session_factory() as contender:
+        PostgresConversationRepository(holder).get_for_update(
+            customers.customer_id, record.conversation.id
+        )
+        with pytest.raises(OperationalError):
+            contender.execute(locked_row)
+        contender.rollback()
+
+        holder.rollback()
+        assert contender.scalars(locked_row).one().id == record.conversation.id
+
+
+def test_mark_closed_updates_only_the_status(
+    session_factory: sessionmaker[Session], customers: Customers
+) -> None:
+    record = make_record(customers.customer_id)
+    other = make_record(customers.customer_id)
+    add_record(session_factory, record)
+    add_record(session_factory, other)
+
+    with session_factory.begin() as session:
+        PostgresConversationRepository(session).mark_closed(record.conversation.id)
+
+    with session_factory.begin() as session:
+        repository = PostgresConversationRepository(session)
+        closed = repository.get_for_update(
+            customers.customer_id, record.conversation.id
+        )
+        untouched = repository.get_for_update(
+            customers.customer_id, other.conversation.id
+        )
+
+    assert closed == replace(
+        record,
+        conversation=replace(record.conversation, status=ConversationStatus.CLOSED),
+    )
+    assert untouched == other
 
 
 def test_get_for_update_is_scoped_to_owner(
