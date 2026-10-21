@@ -1236,11 +1236,45 @@ def test_card_operation_collects_an_ambiguous_card_and_pre_validates(
     )
 
 
+def test_request_resolving_one_card_awaits_confirmation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "Desbloqueá la que termina en 9134",
+        model_output(intent="UNFREEZE_CARD", card_reference="la que termina en 9134"),
+    )
+
+    complete = PendingOperation(
+        PendingOperationType.UNFREEZE_CARD, UnfreezeCardOperationData(VISA_CREDIT.id)
+    )
+    assert turn.intent is Intent.UNFREEZE_CARD
+    assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert turn.result == AwaitingConfirmationResult(complete, card=VISA_CREDIT)
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        complete,
+    )
+
+
 @pytest.mark.parametrize(
     ("output", "error"),
     [
         (
             model_output(intent="FREEZE_CARD", card_reference="la que termina en 9134"),
+            InvalidCardStateError,
+        ),
+        (
+            model_output(
+                intent="UNFREEZE_CARD", card_reference="la que termina en 4821"
+            ),
             InvalidCardStateError,
         ),
         (
@@ -1252,7 +1286,7 @@ def test_card_operation_collects_an_ambiguous_card_and_pre_validates(
             InsufficientFundsError,
         ),
     ],
-    ids=["frozen_card", "insufficient_funds"],
+    ids=["frozen_card", "active_card", "insufficient_funds"],
 )
 def test_failed_pre_validation_discards_the_operation(
     engine: ConversationEngine,
@@ -1331,8 +1365,16 @@ def test_restated_operation_is_merged_while_collecting(
             PENDING_TRANSFER,
             "TRANSFER_MONEY",
         ),
+        (
+            ConversationFlowState.WAITING_CONFIRMATION,
+            PendingOperation(
+                PendingOperationType.UNFREEZE_CARD,
+                UnfreezeCardOperationData(VISA_CREDIT.id),
+            ),
+            "FREEZE_CARD",
+        ),
     ],
-    ids=["collecting", "waiting", "waiting_same_type"],
+    ids=["collecting", "waiting", "waiting_same_type", "waiting_card"],
 )
 def test_second_operation_conflicts_with_the_pending_one(
     engine: ConversationEngine,
@@ -1584,26 +1626,44 @@ def test_confirm_discards_a_transfer_that_fails_revalidation(
     assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
 
 
+@pytest.mark.parametrize(
+    ("operation", "card"),
+    [
+        (
+            PendingOperation(
+                PendingOperationType.FREEZE_CARD,
+                FreezeCardOperationData(VISA_CREDIT.id),
+            ),
+            VISA_CREDIT,
+        ),
+        (
+            PendingOperation(
+                PendingOperationType.UNFREEZE_CARD,
+                UnfreezeCardOperationData(VISA_DEBIT.id),
+            ),
+            VISA_DEBIT,
+        ),
+    ],
+    ids=["freeze", "unfreeze"],
+)
 def test_confirm_discards_a_card_operation_that_fails_revalidation(
     engine: ConversationEngine,
     scope: FakeTransactionScope,
     llm: FakeLLMProvider,
     executable: FakeRepositories,
+    operation: PendingOperation,
+    card: Card,
 ) -> None:
-    # The card was frozen elsewhere after pre-validation.
-    conversation_id = waiting(
-        scope,
-        PendingOperation(
-            PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_CREDIT.id)
-        ),
-    )
+    # The card's status changed elsewhere after pre-validation.
+    conversation_id = waiting(scope, operation)
 
     turn = interact(engine, llm, conversation_id, Confirm())
 
     assert turn.flow_state is ConversationFlowState.READY
     assert isinstance(turn.result, OperationFailedResult)
+    assert turn.result.operation == operation
     assert isinstance(turn.result.error, InvalidCardStateError)
-    assert card_status(scope, VISA_CREDIT.id) is CardStatus.FROZEN
+    assert card_status(scope, card.id) is card.status
     assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
 
 

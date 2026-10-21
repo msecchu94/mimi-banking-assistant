@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -13,25 +13,45 @@ from sqlalchemy.orm import Session, sessionmaker
 from mimi.application.conversation_context import EMPTY_CONTEXT
 from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.conversation_results import (
+    AwaitingConfirmationResult,
     BalancesResult,
+    CardsResult,
+    CollectingDataResult,
+    FieldIssue,
     NoPendingOperationResult,
     OperationCancelledResult,
     OperationCompletedResult,
 )
 from mimi.application.errors import ConversationClosedError, LLMUnavailableError
-from mimi.application.interactions import Cancel, Confirm
+from mimi.application.interactions import Cancel, Confirm, SelectCard
 from mimi.application.interpretation import Intent
 from mimi.application.llm import LLMProvider
-from mimi.application.pending_operations import PendingOperation, TransferOperationData
+from mimi.application.pending_operations import (
+    FreezeCardOperationData,
+    PendingField,
+    PendingOperation,
+    TransferOperationData,
+    UnfreezeCardOperationData,
+)
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
 from mimi.application.use_cases.interpret_message import (
     InterpretCollectionInput,
     InterpretMessage,
 )
 from mimi.composition import Container
-from mimi.domain.entities import Account, Message, Money, Transaction, Transfer
+from mimi.domain.entities import (
+    Account,
+    Card,
+    Message,
+    Money,
+    Transaction,
+    Transfer,
+)
 from mimi.domain.enums import (
     AccountStatus,
+    CardBrand,
+    CardStatus,
+    CardType,
     ConversationFlowState,
     ConversationStatus,
     Currency,
@@ -44,6 +64,7 @@ from mimi.domain.enums import (
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
+    CardModel,
     ConversationModel,
     CustomerModel,
     MessageModel,
@@ -476,3 +497,207 @@ def test_engine_close_discards_the_waiting_operation_without_executing_it(
             "150000.50"
         )
         assert session.scalar(select(func.count()).select_from(TransferModel)) == 0
+
+
+@dataclass(frozen=True)
+class SeedCards:
+    active: Card
+    frozen: Card
+    other_customers: Card
+
+
+@pytest.fixture
+def cards(session_factory: sessionmaker[Session], seed: Seed) -> SeedCards:
+    other_customer = CustomerModel(id=uuid4(), first_name="Otro", last_name="Cliente")
+    other_account = AccountModel(
+        id=uuid4(),
+        customer=other_customer,
+        name="Caja de ahorro",
+        balance=Decimal("1000.00"),
+        currency=Currency.ARS,
+        status=AccountStatus.ACTIVE,
+    )
+    seeded = SeedCards(
+        active=Card(
+            uuid4(),
+            seed.account_id,
+            CardType.DEBIT,
+            CardBrand.VISA,
+            "4821",
+            CardStatus.ACTIVE,
+        ),
+        frozen=Card(
+            uuid4(),
+            seed.account_id,
+            CardType.CREDIT,
+            CardBrand.VISA,
+            "9134",
+            CardStatus.FROZEN,
+        ),
+        other_customers=Card(
+            uuid4(),
+            other_account.id,
+            CardType.DEBIT,
+            CardBrand.MASTERCARD,
+            "7310",
+            CardStatus.ACTIVE,
+        ),
+    )
+    with session_factory.begin() as session:
+        session.add_all([other_customer, other_account])
+        session.flush()
+        session.add_all(
+            CardModel(
+                id=card.id,
+                account_id=card.account_id,
+                type=card.type,
+                brand=card.brand,
+                last_four=card.last_four,
+                status=card.status,
+            )
+            for card in (seeded.active, seeded.frozen, seeded.other_customers)
+        )
+    return seeded
+
+
+def stored_card_status(
+    session_factory: sessionmaker[Session], card_id: UUID
+) -> CardStatus:
+    with session_factory() as session:
+        return session.get_one(CardModel, card_id).status
+
+
+@pytest.mark.parametrize(
+    ("intent", "operation_type", "frozen", "status"),
+    [
+        (
+            Intent.FREEZE_CARD,
+            PendingOperationType.FREEZE_CARD,
+            False,
+            CardStatus.FROZEN,
+        ),
+        (
+            Intent.UNFREEZE_CARD,
+            PendingOperationType.UNFREEZE_CARD,
+            True,
+            CardStatus.ACTIVE,
+        ),
+    ],
+    ids=["freeze", "unfreeze"],
+)
+def test_engine_card_operation_round_trip_is_observed_by_card_query(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    cards: SeedCards,
+    llm_provider: ScriptedLLMProvider,
+    intent: Intent,
+    operation_type: PendingOperationType,
+    frozen: bool,
+    status: CardStatus,
+) -> None:
+    card = cards.frozen if frozen else cards.active
+    data = (
+        FreezeCardOperationData
+        if operation_type is PendingOperationType.FREEZE_CARD
+        else UnfreezeCardOperationData
+    )
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+
+    # The request names no card, so the card is collected.
+    llm_provider.intent = intent
+    requested = engine.handle_message(seed.customer_id, conversation_id, "Mi tarjeta")
+    assert requested.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        PendingOperation(operation_type, data()),
+    )
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    selected = engine.handle_interaction(
+        seed.customer_id, conversation_id, SelectCard(card.id)
+    )
+    operation = PendingOperation(operation_type, data(card.id))
+    assert selected.result == AwaitingConfirmationResult(operation, card=card)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        operation,
+    )
+    assert stored_card_status(session_factory, card.id) is card.status
+
+    confirmed = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+    changed = replace(card, status=status)
+    assert confirmed.intent is intent
+    assert confirmed.result == OperationCompletedResult(operation, card=changed)
+    assert stored_card_status(session_factory, card.id) is status
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+    llm_provider.error = None
+    llm_provider.intent = Intent.GET_CARDS
+    queried = engine.handle_message(seed.customer_id, conversation_id, "Mis tarjetas")
+    assert isinstance(queried.result, CardsResult)
+    assert set(queried.result.cards) == {
+        changed,
+        cards.frozen if not frozen else cards.active,
+    }
+
+
+def test_engine_cancel_leaves_the_card_unchanged(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    cards: SeedCards,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    operation = PendingOperation(
+        PendingOperationType.FREEZE_CARD, FreezeCardOperationData(cards.active.id)
+    )
+    with PostgresTransactionScope(session_factory).begin() as repositories:
+        repositories.conversations.save_pending_operation(
+            conversation_id, ConversationFlowState.WAITING_CONFIRMATION, operation
+        )
+
+    turn = engine.handle_interaction(seed.customer_id, conversation_id, Cancel())
+
+    assert turn.result == OperationCancelledResult(operation)
+    assert stored_card_status(session_factory, cards.active.id) is CardStatus.ACTIVE
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+
+def test_engine_rejects_selecting_another_customers_card(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    cards: SeedCards,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    llm_provider.intent = Intent.FREEZE_CARD
+    engine.handle_message(seed.customer_id, conversation_id, "Congelá mi tarjeta")
+
+    turn = engine.handle_interaction(
+        seed.customer_id, conversation_id, SelectCard(cards.other_customers.id)
+    )
+
+    collecting = PendingOperation(
+        PendingOperationType.FREEZE_CARD, FreezeCardOperationData()
+    )
+    assert turn.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert turn.result == CollectingDataResult(
+        collecting, {PendingField.CARD_ID: FieldIssue.NOT_FOUND}
+    )
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        collecting,
+    )
+    assert (
+        stored_card_status(session_factory, cards.other_customers.id)
+        is CardStatus.ACTIVE
+    )
