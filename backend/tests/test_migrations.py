@@ -119,3 +119,59 @@ def test_migrated_schema_matches_models(test_engine: Engine) -> None:
         Base.metadata.drop_all(test_engine)
 
     assert migrated_schema == model_schema
+
+
+WAITING_ID = "00000000-0000-0000-0000-00000000000a"
+COLLECTING_ID = "00000000-0000-0000-0000-00000000000b"
+
+# Rows at revision 0002: one operation waiting for confirmation and one being
+# collected.
+REVISION_0002_ROWS = f"""
+    INSERT INTO customers (id, first_name, last_name)
+    VALUES ('00000000-0000-0000-0000-000000000001', 'Ana', 'García');
+    INSERT INTO accounts (id, customer_id, name, balance, currency, status)
+    VALUES ('00000000-0000-0000-0000-000000000002',
+            '00000000-0000-0000-0000-000000000001',
+            'Caja de ahorro', 150000.00, 'ARS', 'ACTIVE');
+    INSERT INTO cards (id, account_id, type, brand, last_four, status)
+    VALUES ('00000000-0000-0000-0000-000000000003',
+            '00000000-0000-0000-0000-000000000002',
+            'DEBIT', 'VISA', '4821', 'ACTIVE');
+    INSERT INTO conversations (id, customer_id, status, created_at, updated_at,
+                               flow_state, context, pending_operation_type,
+                               pending_card_id, pending_missing_fields)
+    VALUES ('{WAITING_ID}', '00000000-0000-0000-0000-000000000001', 'ACTIVE',
+            now(), now(), 'WAITING_CONFIRMATION', '{{}}', 'FREEZE_CARD',
+            '00000000-0000-0000-0000-000000000003', '{{}}'),
+           ('{COLLECTING_ID}', '00000000-0000-0000-0000-000000000001', 'ACTIVE',
+            now(), now(), 'COLLECTING_DATA', '{{}}', 'FREEZE_CARD',
+            NULL, '{{card_id}}');
+"""
+
+
+def test_upgrade_discards_operations_waiting_for_confirmation(
+    test_engine: Engine,
+) -> None:
+    # They were offered without the operation id a CONFIRM must now name.
+    run_alembic(test_engine, "upgrade", "0002")
+    try:
+        with test_engine.begin() as connection:
+            connection.execute(text(REVISION_0002_ROWS))
+
+        run_alembic(test_engine, "upgrade", "head")
+
+        with test_engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT id::text, flow_state, pending_operation_type, "
+                    "pending_card_id, pending_missing_fields, pending_operation_id "
+                    "FROM conversations ORDER BY id"
+                )
+            ).all()
+    finally:
+        run_alembic(test_engine, "downgrade", "base")
+
+    assert [tuple(row) for row in rows] == [
+        (WAITING_ID, "READY", None, None, None, None),
+        (COLLECTING_ID, "COLLECTING_DATA", "FREEZE_CARD", None, ["card_id"], None),
+    ]

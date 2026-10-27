@@ -9,7 +9,10 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class Confirm:
-    """Confirm the operation waiting for confirmation."""
+    """Confirm the operation waiting for confirmation whose confirmation
+    request is ``operation_id``."""
+
+    operation_id: UUID
 
 
 @dataclass(frozen=True)

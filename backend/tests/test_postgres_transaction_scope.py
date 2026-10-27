@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -13,25 +13,52 @@ from sqlalchemy.orm import Session, sessionmaker
 from mimi.application.conversation_context import EMPTY_CONTEXT
 from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.conversation_results import (
+    AwaitingConfirmationResult,
     BalancesResult,
+    CardsResult,
+    CollectingDataResult,
+    FieldIssue,
     NoPendingOperationResult,
     OperationCancelledResult,
     OperationCompletedResult,
+    OperationFailedResult,
+    TransactionsResult,
 )
-from mimi.application.errors import ConversationClosedError, LLMUnavailableError
-from mimi.application.interactions import Cancel, Confirm
+from mimi.application.errors import (
+    ConversationClosedError,
+    InsufficientFundsError,
+    InvalidInteractionError,
+    LLMUnavailableError,
+)
+from mimi.application.interactions import Cancel, Confirm, SelectCard
 from mimi.application.interpretation import Intent
 from mimi.application.llm import LLMProvider
-from mimi.application.pending_operations import PendingOperation, TransferOperationData
+from mimi.application.pending_operations import (
+    FreezeCardOperationData,
+    PendingField,
+    PendingOperation,
+    TransferOperationData,
+    UnfreezeCardOperationData,
+)
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
 from mimi.application.use_cases.interpret_message import (
     InterpretCollectionInput,
     InterpretMessage,
 )
 from mimi.composition import Container
-from mimi.domain.entities import Account, Message, Money, Transaction, Transfer
+from mimi.domain.entities import (
+    Account,
+    Card,
+    Message,
+    Money,
+    Transaction,
+    Transfer,
+)
 from mimi.domain.enums import (
     AccountStatus,
+    CardBrand,
+    CardStatus,
+    CardType,
     ConversationFlowState,
     ConversationStatus,
     Currency,
@@ -44,12 +71,14 @@ from mimi.domain.enums import (
 from mimi.infrastructure.database.models import (
     AccountModel,
     BeneficiaryModel,
+    CardModel,
     ConversationModel,
     CustomerModel,
     MessageModel,
     TransactionModel,
     TransferModel,
 )
+from mimi.infrastructure.database.repositories import PostgresTransferRepository
 from mimi.infrastructure.database.session import create_session_factory
 from mimi.infrastructure.database.transaction import (
     PostgresRepositories,
@@ -68,10 +97,12 @@ class ExecutionInterrupted(Exception):
 
 
 class ScriptedLLMProvider:
-    """Answers every interpretation request with a canned intent."""
+    """Answers every interpretation request with a canned intent, and every
+    collection request with details; both carry the canned ``values``."""
 
     def __init__(self, intent: Intent = Intent.GET_BALANCE) -> None:
         self.intent = intent
+        self.values: dict[str, Any] = {}
         self.error: Exception | None = None
 
     def generate_structured[T: BaseModel](
@@ -79,20 +110,13 @@ class ScriptedLLMProvider:
     ) -> T:
         if self.error is not None:
             raise self.error
-        output: dict[str, Any] = dict.fromkeys(
-            [
-                "amount",
-                "currency",
-                "beneficiary_reference",
-                "card_reference",
-                "category",
-                "transaction_type",
-                "period",
-                "comparison_period",
-                "relative_period",
-            ]
-        )
-        return output_type.model_validate({"intent": self.intent.value, **output})
+        output: dict[str, Any] = dict.fromkeys(output_type.model_fields)
+        if "kind" in output:
+            output["kind"] = "DETAILS"
+        else:
+            output["intent"] = self.intent.value
+        output.update(self.values)
+        return output_type.model_validate(output)
 
 
 @pytest.fixture
@@ -365,9 +389,14 @@ def test_engine_failed_interpretation_persists_no_message(
     )
 
 
+OPERATION_ID = uuid4()
+
+
 def waiting_for_transfer(
     session_factory: sessionmaker[Session], seed: Seed, engine: ConversationEngine
 ) -> UUID:
+    """Start a conversation whose transfer waits for confirmation under
+    ``OPERATION_ID``."""
     conversation_id = engine.start(seed.customer_id).conversation.id
     with PostgresTransactionScope(session_factory).begin() as repositories:
         repositories.conversations.save_pending_operation(
@@ -378,6 +407,7 @@ def waiting_for_transfer(
                 TransferOperationData(
                     seed.account_id, seed.beneficiary_id, TRANSFER_AMOUNT
                 ),
+                OPERATION_ID,
             ),
         )
     return conversation_id
@@ -403,8 +433,12 @@ def test_engine_confirm_commits_the_transfer_and_clears_the_operation(
     engine = make_engine(session_factory, llm_provider)
     conversation_id = waiting_for_transfer(session_factory, seed, engine)
 
-    turn = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
-    repeated = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+    turn = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(OPERATION_ID)
+    )
+    repeated = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(OPERATION_ID)
+    )
 
     assert isinstance(turn.result, OperationCompletedResult)
     assert turn.result.transfer is not None
@@ -417,7 +451,7 @@ def test_engine_confirm_commits_the_transfer_and_clears_the_operation(
         ConversationFlowState.READY,
         None,
     )
-    assert repeated.result == NoPendingOperationResult(Confirm())
+    assert repeated.result == NoPendingOperationResult(Confirm(OPERATION_ID))
     with session_factory() as session:
         assert session.scalar(select(func.count()).select_from(TransferModel)) == 1
 
@@ -431,18 +465,17 @@ def test_engine_cancel_clears_the_operation_without_financial_writes(
     conversation_id = waiting_for_transfer(session_factory, seed, engine)
 
     turn = engine.handle_interaction(seed.customer_id, conversation_id, Cancel())
+    confirmed = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(OPERATION_ID)
+    )
 
     assert isinstance(turn.result, OperationCancelledResult)
+    assert confirmed.result == NoPendingOperationResult(Confirm(OPERATION_ID))
     assert stored_flow(session_factory, seed, conversation_id) == (
         ConversationFlowState.READY,
         None,
     )
-    with session_factory() as session:
-        assert session.get_one(AccountModel, seed.account_id).balance == Decimal(
-            "150000.50"
-        )
-        assert session.scalar(select(func.count()).select_from(TransferModel)) == 0
-        assert session.scalar(select(func.count()).select_from(TransactionModel)) == 0
+    assert financial_state(session_factory, seed) == (Decimal("150000.50"), 0, 0)
 
 
 def test_engine_close_discards_the_waiting_operation_without_executing_it(
@@ -458,7 +491,9 @@ def test_engine_close_discards_the_waiting_operation_without_executing_it(
     closed = engine.close(seed.customer_id, conversation_id)
 
     with pytest.raises(ConversationClosedError):
-        engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+        engine.handle_interaction(
+            seed.customer_id, conversation_id, Confirm(OPERATION_ID)
+        )
     with PostgresTransactionScope(session_factory).begin() as repositories:
         stored = repositories.conversations.get_for_update(
             seed.customer_id, conversation_id
@@ -476,3 +511,462 @@ def test_engine_close_discards_the_waiting_operation_without_executing_it(
             "150000.50"
         )
         assert session.scalar(select(func.count()).select_from(TransferModel)) == 0
+
+
+def financial_state(
+    session_factory: sessionmaker[Session], seed: Seed
+) -> tuple[Decimal, int | None, int | None]:
+    """The source balance and the number of stored transfers and transactions."""
+    with session_factory() as session:
+        return (
+            session.get_one(AccountModel, seed.account_id).balance,
+            session.scalar(select(func.count()).select_from(TransferModel)),
+            session.scalar(select(func.count()).select_from(TransactionModel)),
+        )
+
+
+def test_engine_transfer_round_trip_is_observed_by_balance_and_transactions(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+
+    # The request names no amount, so the amount is collected.
+    llm_provider.intent = Intent.TRANSFER_MONEY
+    llm_provider.values = {"beneficiary_reference": "Laura"}
+    requested = engine.handle_message(
+        seed.customer_id, conversation_id, "Transferile a Laura"
+    )
+    assert requested.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        PendingOperation(
+            PendingOperationType.TRANSFER,
+            TransferOperationData(seed.account_id, seed.beneficiary_id),
+        ),
+    )
+
+    llm_provider.values = {"amount": "25000.00"}
+    answered = engine.handle_message(seed.customer_id, conversation_id, "25000")
+    assert isinstance(answered.result, AwaitingConfirmationResult)
+    operation_id = answered.result.operation.operation_id
+    assert operation_id is not None
+    operation = PendingOperation(
+        PendingOperationType.TRANSFER,
+        TransferOperationData(seed.account_id, seed.beneficiary_id, TRANSFER_AMOUNT),
+        operation_id,
+    )
+    assert answered.intent is Intent.TRANSFER_MONEY
+    assert answered.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert answered.result.operation == operation
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        operation,
+    )
+    assert financial_state(session_factory, seed) == (Decimal("150000.50"), 0, 0)
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    confirmed = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(operation_id)
+    )
+    assert confirmed.intent is Intent.TRANSFER_MONEY
+    assert confirmed.flow_state is ConversationFlowState.READY
+    assert isinstance(confirmed.result, OperationCompletedResult)
+    assert confirmed.result.operation == operation
+    transfer = confirmed.result.transfer
+    assert transfer is not None
+    assert transfer == Transfer(
+        id=transfer.id,
+        source_account_id=seed.account_id,
+        beneficiary_id=seed.beneficiary_id,
+        amount=TRANSFER_AMOUNT,
+        status=TransferStatus.COMPLETED,
+        created_at=EXECUTED_AT,
+        executed_at=EXECUTED_AT,
+    )
+    assert stored_state(session_factory, seed, transfer.id) == (
+        Decimal("125000.50"),
+        True,
+        True,
+    )
+    assert financial_state(session_factory, seed) == (Decimal("125000.50"), 1, 1)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+    llm_provider.error = None
+    llm_provider.values = {}
+    llm_provider.intent = Intent.GET_BALANCE
+    balances = engine.handle_message(seed.customer_id, conversation_id, "Saldo")
+    assert isinstance(balances.result, BalancesResult)
+    [account] = balances.result.accounts
+    assert account.balance == BALANCE_AFTER_TRANSFER
+
+    llm_provider.intent = Intent.GET_TRANSACTIONS
+    movements = engine.handle_message(seed.customer_id, conversation_id, "Movimientos")
+    assert isinstance(movements.result, TransactionsResult)
+    [transaction] = movements.result.transactions
+    assert transaction == Transaction(
+        id=transaction.id,
+        account_id=seed.account_id,
+        amount=TRANSFER_AMOUNT,
+        type=TransactionType.DEBIT,
+        category=TransactionCategory.TRANSFER,
+        description="Transfer to Laura",
+        occurred_at=EXECUTED_AT,
+        transfer_id=transfer.id,
+    )
+
+
+def test_engine_confirm_failing_revalidation_writes_nothing(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    llm_provider.intent = Intent.TRANSFER_MONEY
+    llm_provider.values = {"amount": "25000.00", "beneficiary_reference": "Laura"}
+    requested = engine.handle_message(
+        seed.customer_id, conversation_id, "Transferile 25000 a Laura"
+    )
+    assert requested.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert isinstance(requested.result, AwaitingConfirmationResult)
+    operation = requested.result.operation
+    assert operation.operation_id is not None
+
+    # The balance dropped elsewhere after pre-validation.
+    with session_factory.begin() as session:
+        session.get_one(AccountModel, seed.account_id).balance = Decimal("100.00")
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    turn = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(operation.operation_id)
+    )
+
+    assert turn.flow_state is ConversationFlowState.READY
+    assert isinstance(turn.result, OperationFailedResult)
+    assert turn.result.operation == operation
+    assert isinstance(turn.result.error, InsufficientFundsError)
+    assert financial_state(session_factory, seed) == (Decimal("100.00"), 0, 0)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+
+def test_engine_confirm_interrupted_after_the_first_write_writes_nothing(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+    waiting = stored_flow(session_factory, seed, conversation_id)
+
+    # The transfer fails to be recorded after the balance was updated.
+    def interrupt(*args: object) -> None:
+        raise ExecutionInterrupted
+
+    monkeypatch.setattr(PostgresTransferRepository, "add", interrupt)
+
+    with pytest.raises(ExecutionInterrupted):
+        engine.handle_interaction(
+            seed.customer_id, conversation_id, Confirm(OPERATION_ID)
+        )
+
+    assert financial_state(session_factory, seed) == (Decimal("150000.50"), 0, 0)
+    assert stored_flow(session_factory, seed, conversation_id) == waiting
+
+    monkeypatch.undo()
+    retried = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(OPERATION_ID)
+    )
+
+    assert isinstance(retried.result, OperationCompletedResult)
+    assert financial_state(session_factory, seed) == (Decimal("125000.50"), 1, 1)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+
+def test_engine_correction_invalidates_the_earlier_confirmation(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    llm_provider.intent = Intent.TRANSFER_MONEY
+    llm_provider.values = {"amount": "25000.00", "beneficiary_reference": "Laura"}
+    requested = engine.handle_message(
+        seed.customer_id, conversation_id, "Transferile 25000 a Laura"
+    )
+    assert isinstance(requested.result, AwaitingConfirmationResult)
+    earlier = requested.result.operation.operation_id
+    assert earlier is not None
+
+    llm_provider.values = {"amount": "20000.00"}
+    corrected = engine.handle_message(
+        seed.customer_id, conversation_id, "No, mejor 20000"
+    )
+
+    assert corrected.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert isinstance(corrected.result, AwaitingConfirmationResult)
+    operation_id = corrected.result.operation.operation_id
+    assert operation_id is not None
+    assert operation_id != earlier
+    operation = PendingOperation(
+        PendingOperationType.TRANSFER,
+        TransferOperationData(
+            seed.account_id,
+            seed.beneficiary_id,
+            Money(Decimal("20000.00"), Currency.ARS),
+        ),
+        operation_id,
+    )
+    assert corrected.result.operation == operation
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        operation,
+    )
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    with pytest.raises(InvalidInteractionError):
+        engine.handle_interaction(seed.customer_id, conversation_id, Confirm(earlier))
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        operation,
+    )
+    assert financial_state(session_factory, seed) == (Decimal("150000.50"), 0, 0)
+
+    confirmed = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(operation_id)
+    )
+
+    assert isinstance(confirmed.result, OperationCompletedResult)
+    assert confirmed.result.operation == operation
+    assert confirmed.result.transfer is not None
+    assert confirmed.result.transfer.amount == Money(Decimal("20000.00"), Currency.ARS)
+    assert financial_state(session_factory, seed) == (Decimal("130000.50"), 1, 1)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+
+@dataclass(frozen=True)
+class SeedCards:
+    active: Card
+    frozen: Card
+    other_customers: Card
+
+
+@pytest.fixture
+def cards(session_factory: sessionmaker[Session], seed: Seed) -> SeedCards:
+    other_customer = CustomerModel(id=uuid4(), first_name="Otro", last_name="Cliente")
+    other_account = AccountModel(
+        id=uuid4(),
+        customer=other_customer,
+        name="Caja de ahorro",
+        balance=Decimal("1000.00"),
+        currency=Currency.ARS,
+        status=AccountStatus.ACTIVE,
+    )
+    seeded = SeedCards(
+        active=Card(
+            uuid4(),
+            seed.account_id,
+            CardType.DEBIT,
+            CardBrand.VISA,
+            "4821",
+            CardStatus.ACTIVE,
+        ),
+        frozen=Card(
+            uuid4(),
+            seed.account_id,
+            CardType.CREDIT,
+            CardBrand.VISA,
+            "9134",
+            CardStatus.FROZEN,
+        ),
+        other_customers=Card(
+            uuid4(),
+            other_account.id,
+            CardType.DEBIT,
+            CardBrand.MASTERCARD,
+            "7310",
+            CardStatus.ACTIVE,
+        ),
+    )
+    with session_factory.begin() as session:
+        session.add_all([other_customer, other_account])
+        session.flush()
+        session.add_all(
+            CardModel(
+                id=card.id,
+                account_id=card.account_id,
+                type=card.type,
+                brand=card.brand,
+                last_four=card.last_four,
+                status=card.status,
+            )
+            for card in (seeded.active, seeded.frozen, seeded.other_customers)
+        )
+    return seeded
+
+
+def stored_card_status(
+    session_factory: sessionmaker[Session], card_id: UUID
+) -> CardStatus:
+    with session_factory() as session:
+        return session.get_one(CardModel, card_id).status
+
+
+@pytest.mark.parametrize(
+    ("intent", "operation_type", "frozen", "status"),
+    [
+        (
+            Intent.FREEZE_CARD,
+            PendingOperationType.FREEZE_CARD,
+            False,
+            CardStatus.FROZEN,
+        ),
+        (
+            Intent.UNFREEZE_CARD,
+            PendingOperationType.UNFREEZE_CARD,
+            True,
+            CardStatus.ACTIVE,
+        ),
+    ],
+    ids=["freeze", "unfreeze"],
+)
+def test_engine_card_operation_round_trip_is_observed_by_card_query(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    cards: SeedCards,
+    llm_provider: ScriptedLLMProvider,
+    intent: Intent,
+    operation_type: PendingOperationType,
+    frozen: bool,
+    status: CardStatus,
+) -> None:
+    card = cards.frozen if frozen else cards.active
+    data = (
+        FreezeCardOperationData
+        if operation_type is PendingOperationType.FREEZE_CARD
+        else UnfreezeCardOperationData
+    )
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+
+    # The request names no card, so the card is collected.
+    llm_provider.intent = intent
+    requested = engine.handle_message(seed.customer_id, conversation_id, "Mi tarjeta")
+    assert requested.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        PendingOperation(operation_type, data()),
+    )
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    selected = engine.handle_interaction(
+        seed.customer_id, conversation_id, SelectCard(card.id)
+    )
+    assert isinstance(selected.result, AwaitingConfirmationResult)
+    operation_id = selected.result.operation.operation_id
+    assert operation_id is not None
+    operation = PendingOperation(operation_type, data(card.id), operation_id)
+    assert selected.result == AwaitingConfirmationResult(operation, card=card)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        operation,
+    )
+    assert stored_card_status(session_factory, card.id) is card.status
+
+    confirmed = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(operation_id)
+    )
+    changed = replace(card, status=status)
+    assert confirmed.intent is intent
+    assert confirmed.result == OperationCompletedResult(operation, card=changed)
+    assert stored_card_status(session_factory, card.id) is status
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+    llm_provider.error = None
+    llm_provider.intent = Intent.GET_CARDS
+    queried = engine.handle_message(seed.customer_id, conversation_id, "Mis tarjetas")
+    assert isinstance(queried.result, CardsResult)
+    assert set(queried.result.cards) == {
+        changed,
+        cards.frozen if not frozen else cards.active,
+    }
+
+
+def test_engine_cancel_leaves_the_card_unchanged(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    cards: SeedCards,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    operation = PendingOperation(
+        PendingOperationType.FREEZE_CARD,
+        FreezeCardOperationData(cards.active.id),
+        uuid4(),
+    )
+    with PostgresTransactionScope(session_factory).begin() as repositories:
+        repositories.conversations.save_pending_operation(
+            conversation_id, ConversationFlowState.WAITING_CONFIRMATION, operation
+        )
+
+    turn = engine.handle_interaction(seed.customer_id, conversation_id, Cancel())
+
+    assert turn.result == OperationCancelledResult(operation)
+    assert stored_card_status(session_factory, cards.active.id) is CardStatus.ACTIVE
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+
+def test_engine_rejects_selecting_another_customers_card(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    cards: SeedCards,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    llm_provider.intent = Intent.FREEZE_CARD
+    engine.handle_message(seed.customer_id, conversation_id, "Congelá mi tarjeta")
+
+    turn = engine.handle_interaction(
+        seed.customer_id, conversation_id, SelectCard(cards.other_customers.id)
+    )
+
+    collecting = PendingOperation(
+        PendingOperationType.FREEZE_CARD, FreezeCardOperationData()
+    )
+    assert turn.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert turn.result == CollectingDataResult(
+        collecting, {PendingField.CARD_ID: FieldIssue.NOT_FOUND}
+    )
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        collecting,
+    )
+    assert (
+        stored_card_status(session_factory, cards.other_customers.id)
+        is CardStatus.ACTIVE
+    )
