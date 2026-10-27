@@ -11,6 +11,7 @@ from mimi.application.errors import (
     LLMInvalidResponseError,
     LLMUnavailableError,
     NotFoundError,
+    PendingOperationConflictError,
 )
 
 
@@ -68,6 +69,11 @@ def test_llm_errors_are_dependency_unavailable_with_public_code(
             InvalidConversationStateError,
             ConflictError,
             "INVALID_CONVERSATION_STATE",
+        ),
+        (
+            PendingOperationConflictError,
+            ConflictError,
+            "PENDING_OPERATION_CONFLICT",
         ),
     ],
 )

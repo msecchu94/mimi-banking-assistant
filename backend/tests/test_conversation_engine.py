@@ -1576,7 +1576,9 @@ def test_confirm_executes_the_persisted_transfer(
         flow_state=ConversationFlowState.READY,
         message=None,
         intent=Intent.TRANSFER_MONEY,
-        result=OperationCompletedResult(LAURA_25000, transfer=transfer),
+        result=OperationCompletedResult(
+            LAURA_25000, transfer=transfer, beneficiary=LAURA
+        ),
     )
     assert transfer.source_account_id == SAVINGS.id
     assert transfer.beneficiary_id == LAURA.id
@@ -1986,7 +1988,9 @@ def test_complete_correction_requests_a_new_confirmation(
     confirmed = interact(engine, llm, conversation_id, confirm(corrected))
 
     [(transfer, _)] = executable.transfers.transfers
-    assert confirmed.result == OperationCompletedResult(corrected, transfer=transfer)
+    assert confirmed.result == OperationCompletedResult(
+        corrected, transfer=transfer, beneficiary=LAURA
+    )
     assert transfer.amount == Money(Decimal("20000"), Currency.ARS)
     assert balance(scope) == Money(Decimal("130000.50"), Currency.ARS)
 

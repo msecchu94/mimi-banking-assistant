@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
 
@@ -52,6 +53,14 @@ def validate_transfer(
     return account, beneficiary
 
 
+@dataclass(frozen=True)
+class ExecutedTransfer:
+    """An executed Transfer and the beneficiary it was validated against."""
+
+    transfer: Transfer
+    beneficiary: Beneficiary
+
+
 class ExecuteTransfer:
     """Execute a simulated transfer from an owned account to a saved beneficiary.
 
@@ -83,7 +92,7 @@ class ExecuteTransfer:
         source_account_id: UUID,
         beneficiary_id: UUID,
         amount: Money,
-    ) -> Transfer:
+    ) -> ExecutedTransfer:
         if not is_valid_transfer_amount(amount.amount):
             raise InvalidAmountError()
 
@@ -121,4 +130,4 @@ class ExecuteTransfer:
             Money(account.balance.amount - amount.amount, amount.currency),
         )
         self._transfers.add(transfer, transaction)
-        return transfer
+        return ExecutedTransfer(transfer, beneficiary)

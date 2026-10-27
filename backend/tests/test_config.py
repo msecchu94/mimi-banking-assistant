@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -235,4 +236,25 @@ def test_invalid_timezone_is_rejected(
     monkeypatch.setenv("MIMI_TIMEZONE", value)
 
     with pytest.raises(ValidationError, match="timezone"):
+        Settings(_env_file=None)
+
+
+def test_demo_customer_is_optional() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.demo_customer_id is None
+
+
+def test_demo_customer_is_read_from_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MIMI_DEMO_CUSTOMER_ID", "0e275bc8-90cc-5472-a99f-ad4a4bdb416f")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.demo_customer_id == UUID("0e275bc8-90cc-5472-a99f-ad4a4bdb416f")
+
+
+def test_invalid_demo_customer_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MIMI_DEMO_CUSTOMER_ID", "valentina")
+
+    with pytest.raises(ValidationError, match="demo_customer_id"):
         Settings(_env_file=None)

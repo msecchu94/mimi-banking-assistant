@@ -135,7 +135,7 @@ class Harness:
             source_account_id=source_account_id or self.account.id,
             beneficiary_id=beneficiary_id or self.beneficiary.id,
             amount=amount,
-        )
+        ).transfer
 
     def assert_no_writes(self) -> None:
         assert self.accounts.balance_updates == []
@@ -164,6 +164,18 @@ def test_executes_completed_transfer(harness: Harness) -> None:
         created_at=NOW,
         executed_at=NOW,
     )
+
+
+def test_returns_the_beneficiary_it_was_validated_against(harness: Harness) -> None:
+    executed = harness.use_case.execute(
+        customer_id=CUSTOMER_ID,
+        source_account_id=harness.account.id,
+        beneficiary_id=harness.beneficiary.id,
+        amount=ars("25000.00"),
+    )
+
+    assert executed.beneficiary == harness.beneficiary
+    assert harness.beneficiaries.reads == 1
 
 
 def test_persists_transfer_with_linked_debit_transaction(harness: Harness) -> None:

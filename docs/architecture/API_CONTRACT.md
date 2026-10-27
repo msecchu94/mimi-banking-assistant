@@ -57,6 +57,30 @@ Successful responses and error responses are separate contracts.
 
 Errors must never be encoded as successful `200 OK` responses.
 
+### Starting a Conversation
+
+A Conversation is started before chatting:
+
+```http
+POST /conversations
+```
+
+The request has no body. It returns `201 Created`:
+
+```json
+{
+  "conversation_id": "9e47b4c1-4a8c-4a3c-98d2-a31c9c87e641",
+  "conversation_state": "READY",
+  "metadata": {
+    "request_id": "req-50dc23a1",
+    "timestamp": "2026-10-09T16:30:00Z"
+  }
+}
+```
+
+V1 serves a single configured demo customer and has no authentication; no
+customer identity is sent by the client.
+
 ---
 
 ## 3. Chat Request
@@ -156,6 +180,8 @@ Example:
 }
 ```
 
+An empty or whitespace-only `message` is an invalid request.
+
 Free-text messages may require LLM interpretation.
 
 The backend is responsible for determining:
@@ -249,6 +275,8 @@ Payload:
 none
 ```
 
+`payload` is omitted or `null`; an object payload is invalid.
+
 Example:
 
 ```json
@@ -282,6 +310,8 @@ An interaction with an incompatible or malformed payload is an API error.
 
 The payload structure is determined by the interaction type and must not be
 treated as an unrestricted arbitrary object.
+
+Unknown request or payload fields are invalid.
 
 ---
 
@@ -509,6 +539,9 @@ Example:
 }
 ```
 
+A completed freeze or unfreeze also returns `CARD_LIST`, containing only the
+updated card with its new status.
+
 Flutter renders the cards but does not determine their financial state.
 
 ---
@@ -596,6 +629,8 @@ Example:
 }
 ```
 
+`bank_name` is `null` when unknown.
+
 Sensitive or unnecessary banking identifiers must not be exposed merely for
 display purposes.
 
@@ -619,6 +654,7 @@ Example:
       "operation_id": "5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d",
       "title": "Confirm transfer",
       "summary": {
+        "type": "TRANSFER",
         "amount": {
           "amount": "25000.00",
           "currency": "ARS"
@@ -640,6 +676,28 @@ Example:
 }
 ```
 
+`summary.type` defines the summary's shape:
+
+```text
+TRANSFER → amount: Money, beneficiary: string
+CARD     → card: the card, as in CARD_LIST
+```
+
+A card freeze or unfreeze summary:
+
+```json
+{
+  "type": "CARD",
+  "card": {
+    "id": "16e39f21-93b5-48b5-a8dc-90ad03ea5dd1",
+    "brand": "VISA",
+    "type": "DEBIT",
+    "last_four": "4821",
+    "status": "ACTIVE"
+  }
+}
+```
+
 Flutter renders the available actions.
 
 The actions do not authorize execution locally.
@@ -653,6 +711,10 @@ this `operation_id`.
 
 `EXPENSE_SUMMARY` represents backend-calculated spending information for one
 period.
+
+Expenses are reported per currency. Currencies are never combined or
+converted: `currencies` has one entry per currency with expenses, and is
+empty when there were none. `to` is the last day of the period, inclusive.
 
 Example:
 
@@ -668,24 +730,28 @@ Example:
         "from": "2026-10-01",
         "to": "2026-10-31"
       },
-      "total": {
-        "amount": "185000.00",
-        "currency": "ARS"
-      },
-      "categories": [
+      "currencies": [
         {
-          "category": "DINING",
-          "amount": {
-            "amount": "85000.00",
+          "total": {
+            "amount": "185000.00",
             "currency": "ARS"
-          }
-        },
-        {
-          "category": "GROCERIES",
-          "amount": {
-            "amount": "60000.00",
-            "currency": "ARS"
-          }
+          },
+          "categories": [
+            {
+              "category": "DINING",
+              "amount": {
+                "amount": "85000.00",
+                "currency": "ARS"
+              }
+            },
+            {
+              "category": "GROCERIES",
+              "amount": {
+                "amount": "60000.00",
+                "currency": "ARS"
+              }
+            }
+          ]
         }
       ]
     }
@@ -705,6 +771,12 @@ financial truth.
 `EXPENSE_COMPARISON` represents a backend-calculated comparison between two
 periods.
 
+Each currency is compared independently; currencies are never combined or
+converted. A currency without expenses in one period counts as zero there.
+`difference` is the non-negative magnitude of current minus previous, and
+`change` carries its direction: `INCREASE`, `DECREASE` or `UNCHANGED`.
+Flutter must not infer the direction from amounts.
+
 Example:
 
 ```json
@@ -717,24 +789,29 @@ Example:
     "data": {
       "current_period": {
         "from": "2026-10-01",
-        "to": "2026-10-31",
-        "total": {
-          "amount": "185000.00",
-          "currency": "ARS"
-        }
+        "to": "2026-10-31"
       },
       "previous_period": {
         "from": "2026-09-01",
-        "to": "2026-09-30",
-        "total": {
-          "amount": "160000.00",
-          "currency": "ARS"
-        }
+        "to": "2026-09-30"
       },
-      "difference": {
-        "amount": "25000.00",
-        "currency": "ARS"
-      }
+      "currencies": [
+        {
+          "current_total": {
+            "amount": "185000.00",
+            "currency": "ARS"
+          },
+          "previous_total": {
+            "amount": "160000.00",
+            "currency": "ARS"
+          },
+          "difference": {
+            "amount": "25000.00",
+            "currency": "ARS"
+          },
+          "change": "INCREASE"
+        }
+      ]
     }
   }
 }
@@ -826,7 +903,8 @@ Money
 └── currency: Currency
 ```
 
-JSON represents the decimal amount as a string:
+JSON represents the decimal amount as a string with exactly two decimal
+places:
 
 ```json
 {
@@ -836,6 +914,8 @@ JSON represents the decimal amount as a string:
 ```
 
 Financial amounts must not be transported as binary floating-point values.
+An amount with more than two decimal places is never rounded; the backend
+rejects it.
 
 ---
 
@@ -942,7 +1022,6 @@ The following codes establish the initial V1 error vocabulary.
 ```text
 INVALID_REQUEST
 INVALID_INTERACTION
-INVALID_INTERACTION_PAYLOAD
 CONVERSATION_NOT_FOUND
 CONVERSATION_CLOSED
 ```
@@ -1019,6 +1098,11 @@ is not an API failure.
 By contrast, when a requested operation cannot be performed because of a
 business, validation, resource, or state error, the API returns the
 corresponding non-success HTTP response.
+
+An operation that fails pre-validation or revalidation is discarded without
+being executed, so no operation is pending afterwards. A state-changing
+request made while another operation is pending returns
+`409 PENDING_OPERATION_CONFLICT`; the pending operation is unchanged.
 
 ---
 

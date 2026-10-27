@@ -442,7 +442,7 @@ def _execute(
                 beneficiary_id=UUID() as beneficiary_id,
                 amount=amount,
             ) if amount is not None:
-                transfer = ExecuteTransfer(
+                executed = ExecuteTransfer(
                     repositories.accounts,
                     repositories.beneficiaries,
                     repositories.transfers,
@@ -453,7 +453,11 @@ def _execute(
                     beneficiary_id=beneficiary_id,
                     amount=amount,
                 )
-                return OperationCompletedResult(operation, transfer=transfer)
+                return OperationCompletedResult(
+                    operation,
+                    transfer=executed.transfer,
+                    beneficiary=executed.beneficiary,
+                )
             case FreezeCardOperationData(card_id=UUID() as card_id):
                 card = FreezeCard(repositories.cards).execute(customer_id, card_id)
                 return OperationCompletedResult(operation, card=card)
