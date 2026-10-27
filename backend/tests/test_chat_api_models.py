@@ -208,30 +208,48 @@ UI_EXAMPLES: dict[str, dict[str, Any]] = {
     },
     "EXPENSE_SUMMARY": {
         "period": {"from": "2026-10-01", "to": "2026-10-31"},
-        "total": {"amount": "185000.00", "currency": "ARS"},
-        "categories": [
+        "currencies": [
             {
-                "category": "DINING",
-                "amount": {"amount": "85000.00", "currency": "ARS"},
+                "total": {"amount": "185000.00", "currency": "ARS"},
+                "categories": [
+                    {
+                        "category": "DINING",
+                        "amount": {"amount": "85000.00", "currency": "ARS"},
+                    },
+                    {
+                        "category": "GROCERIES",
+                        "amount": {"amount": "60000.00", "currency": "ARS"},
+                    },
+                ],
             },
             {
-                "category": "GROCERIES",
-                "amount": {"amount": "60000.00", "currency": "ARS"},
+                "total": {"amount": "120.00", "currency": "USD"},
+                "categories": [
+                    {
+                        "category": "SUBSCRIPTIONS",
+                        "amount": {"amount": "120.00", "currency": "USD"},
+                    }
+                ],
             },
         ],
     },
     "EXPENSE_COMPARISON": {
-        "current_period": {
-            "from": "2026-10-01",
-            "to": "2026-10-31",
-            "total": {"amount": "185000.00", "currency": "ARS"},
-        },
-        "previous_period": {
-            "from": "2026-09-01",
-            "to": "2026-09-30",
-            "total": {"amount": "160000.00", "currency": "ARS"},
-        },
-        "difference": MONEY,
+        "current_period": {"from": "2026-10-01", "to": "2026-10-31"},
+        "previous_period": {"from": "2026-09-01", "to": "2026-09-30"},
+        "currencies": [
+            {
+                "current_total": {"amount": "185000.00", "currency": "ARS"},
+                "previous_total": {"amount": "160000.00", "currency": "ARS"},
+                "difference": MONEY,
+                "change": "INCREASE",
+            },
+            {
+                "current_total": {"amount": "80.00", "currency": "USD"},
+                "previous_total": {"amount": "120.00", "currency": "USD"},
+                "difference": {"amount": "40.00", "currency": "USD"},
+                "change": "DECREASE",
+            },
+        ],
     },
     "TRANSACTION_LIST": {
         "transactions": [
@@ -321,8 +339,52 @@ def test_confirmation_summary_must_match_its_type(summary: dict[str, Any]) -> No
         ("CARD_LIST", UI_EXAMPLES["BENEFICIARY_LIST"]),
         ("CONFIRMATION", {**UI_EXAMPLES["CONFIRMATION"], "operation_id": None}),
         ("ERROR", {}),
+        (
+            "EXPENSE_SUMMARY",
+            {
+                "period": {"from": "2026-10-01", "to": "2026-10-31"},
+                "total": MONEY,
+                "categories": [],
+            },
+        ),
+        (
+            "EXPENSE_COMPARISON",
+            {
+                **UI_EXAMPLES["EXPENSE_COMPARISON"],
+                "currencies": [
+                    {
+                        "current_total": MONEY,
+                        "previous_total": MONEY,
+                        "difference": {"amount": "-1.00", "currency": "ARS"},
+                        "change": "DECREASE",
+                    }
+                ],
+            },
+        ),
+        (
+            "EXPENSE_COMPARISON",
+            {
+                **UI_EXAMPLES["EXPENSE_COMPARISON"],
+                "currencies": [
+                    {
+                        "current_total": MONEY,
+                        "previous_total": MONEY,
+                        "difference": MONEY,
+                        "change": "UP",
+                    }
+                ],
+            },
+        ),
     ],
-    ids=["text_with_cards", "cards_with_beneficiaries", "no_operation_id", "error"],
+    ids=[
+        "text_with_cards",
+        "cards_with_beneficiaries",
+        "no_operation_id",
+        "error",
+        "combined_expense_total",
+        "negative_difference",
+        "unknown_change",
+    ],
 )
 def test_ui_data_must_match_its_type(ui_type: str, data: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):

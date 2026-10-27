@@ -134,11 +134,12 @@ class PreValidationFailedResult:
 @dataclass(frozen=True)
 class OperationCompletedResult:
     """A confirmed operation that passed revalidation and was executed; a
-    transfer sets ``transfer``, a card operation sets ``card`` with its new
-    status."""
+    transfer sets ``transfer`` and the ``beneficiary`` it was revalidated
+    against, a card operation sets ``card`` with its new status."""
 
     operation: PendingOperation
     transfer: Transfer | None = None
+    beneficiary: Beneficiary | None = None
     card: Card | None = None
 
 

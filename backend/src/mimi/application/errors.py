@@ -95,6 +95,13 @@ class InvalidInteractionError(ConflictError):
     default_message = "This action is not available in the current conversation."
 
 
+class PendingOperationConflictError(ConflictError):
+    code = "PENDING_OPERATION_CONFLICT"
+    default_message = (
+        "Another operation is pending; confirm or cancel it before starting a new one."
+    )
+
+
 class ConversationStateCorruptedError(Exception):
     """Persisted conversational state is malformed or inconsistent.
 

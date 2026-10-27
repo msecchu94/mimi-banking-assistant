@@ -87,7 +87,7 @@ def execute(repositories: PostgresRepositories, seed: Seed, amount: str) -> Tran
         source_account_id=seed.account_id,
         beneficiary_id=seed.beneficiary_id,
         amount=Money(Decimal(amount), Currency.ARS),
-    )
+    ).transfer
 
 
 def assert_untouched(session_factory: sessionmaker[Session], seed: Seed) -> None:
