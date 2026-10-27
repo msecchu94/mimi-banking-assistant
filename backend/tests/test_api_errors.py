@@ -1,11 +1,13 @@
 from collections.abc import Iterator
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
+from mimi.api.errors import get_request_id
 from mimi.application.errors import (
     ApplicationError,
     BusinessRuleViolationError,
@@ -54,6 +56,13 @@ def error_client(app: FastAPI) -> Iterator[TestClient]:
             "unexpected": RuntimeError("database password is s3cret"),
         }
         raise errors[name]
+
+    @app.get("/test/correlated/{name}")
+    def raise_correlated_error(
+        name: str, request_id: Annotated[str, Depends(get_request_id)]
+    ) -> None:
+        app.state.seen_request_id = request_id
+        raise_error(name)
 
     @app.get("/test/items/{item_id}")
     def get_item(item_id: int) -> dict[str, int]:
@@ -136,3 +145,12 @@ def test_uncategorized_application_error_maps_to_internal_error(
     assert_error_response(
         response.json(), "INTERNAL_ERROR", "An unexpected error occurred."
     )
+
+
+@pytest.mark.parametrize("name", ["not-found", "unavailable", "unexpected"])
+def test_error_response_reuses_the_request_id(
+    app: FastAPI, error_client: TestClient, name: str
+) -> None:
+    response = error_client.get(f"/test/correlated/{name}")
+
+    assert response.json()["request_id"] == app.state.seen_request_id
