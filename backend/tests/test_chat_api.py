@@ -1,3 +1,5 @@
+import json
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -36,7 +38,17 @@ from mimi.application.conversation_results import (
     TurnResult,
     UnhandledIntentResult,
 )
-from mimi.application.errors import InsufficientFundsError, InvalidCardStateError
+from mimi.application.errors import (
+    ApplicationError,
+    ConversationClosedError,
+    ConversationNotFoundError,
+    ConversationStateCorruptedError,
+    InsufficientFundsError,
+    InvalidCardStateError,
+    InvalidConversationStateError,
+    InvalidInteractionError,
+    LLMUnavailableError,
+)
 from mimi.application.interactions import Cancel, Confirm, Interaction, SelectCard
 from mimi.application.interpretation import Intent
 from mimi.application.llm import LLMProvider
@@ -158,16 +170,19 @@ def card_json(card: Card) -> dict[str, Any]:
 
 
 class StubEngine:
-    """Records the calls it receives and answers with ``turn``'s parts."""
+    """Records the calls it receives and answers with ``turn``'s parts, or
+    raises ``error`` when set."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[Any, ...]] = []
+        self.error: Exception | None = None
         self.result: TurnResult = UnhandledIntentResult(Intent.UNKNOWN)
         self.intent = Intent.UNKNOWN
         self.flow_state = ConversationFlowState.READY
 
     def start(self, customer_id: UUID) -> ConversationRecord:
         self.calls.append(("start", customer_id))
+        self._raise_error()
         return ConversationRecord(
             Conversation(
                 CONVERSATION_ID, customer_id, ConversationStatus.ACTIVE, NOW, NOW
@@ -187,7 +202,12 @@ class StubEngine:
         self.calls.append(("interaction", customer_id, conversation_id, interaction))
         return self._turn(conversation_id)
 
+    def _raise_error(self) -> None:
+        if self.error is not None:
+            raise self.error
+
     def _turn(self, conversation_id: UUID) -> Turn:
+        self._raise_error()
         return Turn(conversation_id, self.flow_state, None, self.intent, self.result)
 
 
@@ -833,6 +853,173 @@ def test_failed_operations_are_error_responses(
     assert response.json()["code"] == code
 
 
+# Errors.
+
+
+def assert_api_error(response: Any, status: int, code: str) -> dict[str, Any]:
+    assert response.status_code == status
+    body: dict[str, Any] = response.json()
+    assert set(body) == {"code", "message", "request_id", "timestamp"}
+    assert body["code"] == code
+    UUID(body["request_id"])
+    return body
+
+
+@pytest.fixture
+def failing_client(app: FastAPI, stub: StubEngine) -> Iterator[TestClient]:
+    """A client that receives unexpected errors as responses, like a real one."""
+    app.dependency_overrides[get_conversation_engine] = lambda: stub
+    with TestClient(app, raise_server_exceptions=False) as client:
+        yield client
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (ConversationNotFoundError(), 404),
+        (ConversationClosedError(), 409),
+        (InvalidConversationStateError(), 409),
+        (InvalidInteractionError(), 409),
+        (LLMUnavailableError(), 503),
+    ],
+    ids=[
+        "conversation_not_found",
+        "conversation_closed",
+        "invalid_conversation_state",
+        "invalid_interaction",
+        "service_unavailable",
+    ],
+)
+def test_engine_errors_are_error_responses(
+    chat_client: TestClient,
+    stub: StubEngine,
+    error: ApplicationError,
+    status: int,
+) -> None:
+    stub.error = error
+
+    body = assert_api_error(post_message(chat_client), status, error.code)
+
+    assert body["message"] == error.message
+
+
+_CONVERSATION = str(CONVERSATION_ID)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{not json",
+        json.dumps({"message": "Hola"}),
+        json.dumps({"conversation_id": "not-a-uuid", "message": "Hola"}),
+        json.dumps({"conversation_id": _CONVERSATION, "message": "Hola", "x": 1}),
+        json.dumps({"conversation_id": _CONVERSATION, "message": "   "}),
+        json.dumps({"conversation_id": _CONVERSATION}),
+        json.dumps({"conversation_id": _CONVERSATION, "interaction": "CONFIRM"}),
+        json.dumps(
+            {
+                "conversation_id": _CONVERSATION,
+                "interaction": "CONFIRM",
+                "payload": {"card_id": str(VISA_DEBIT.id)},
+            }
+        ),
+        json.dumps(
+            {
+                "conversation_id": _CONVERSATION,
+                "interaction": "CANCEL",
+                "payload": {"operation_id": str(OPERATION_ID)},
+            }
+        ),
+        json.dumps({"conversation_id": _CONVERSATION, "interaction": "TRANSFER"}),
+    ],
+    ids=[
+        "malformed_json",
+        "missing_conversation_id",
+        "malformed_conversation_id",
+        "unknown_field",
+        "blank_message",
+        "neither_message_nor_interaction",
+        "missing_payload",
+        "incompatible_payload",
+        "unexpected_payload",
+        "unknown_interaction",
+    ],
+)
+def test_invalid_requests_are_invalid_request_errors(
+    chat_client: TestClient, stub: StubEngine, content: str
+) -> None:
+    response = chat_client.post(
+        "/chat", content=content, headers={"Content-Type": "application/json"}
+    )
+
+    body = assert_api_error(response, 422, "INVALID_REQUEST")
+    assert body["message"] == "The request is invalid."
+    assert stub.calls == []
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "error"),
+    [
+        ("/conversations", None, RuntimeError("database password is s3cret")),
+        (
+            "/chat",
+            {"conversation_id": _CONVERSATION, "message": "Hola"},
+            ConversationStateCorruptedError("stored flow state s3cret is invalid"),
+        ),
+    ],
+    ids=["conversations", "chat"],
+)
+def test_unexpected_errors_are_internal_errors_without_details(
+    failing_client: TestClient,
+    stub: StubEngine,
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    body: dict[str, Any] | None,
+    error: Exception,
+) -> None:
+    stub.error = error
+
+    response = failing_client.post(path, json=body)
+
+    error_body = assert_api_error(response, 500, "INTERNAL_ERROR")
+    assert error_body["message"] == "An unexpected error occurred."
+    assert "s3cret" not in response.text
+    assert type(error).__name__ not in response.text
+    [record] = [r for r in caplog.records if error_body["request_id"] in r.message]
+    assert record.levelno == logging.ERROR
+
+
+@pytest.mark.parametrize(
+    ("error", "level"),
+    [
+        (ConversationNotFoundError(), logging.INFO),
+        (LLMUnavailableError(), logging.WARNING),
+    ],
+    ids=["client_error", "service_unavailable"],
+)
+def test_handled_errors_are_logged_with_their_request_id(
+    chat_client: TestClient,
+    stub: StubEngine,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    level: int,
+) -> None:
+    caplog.set_level(logging.INFO, logger="mimi.api.errors")
+    stub.error = error
+
+    request_id = post_message(chat_client).json()["request_id"]
+
+    [record] = [r for r in caplog.records if request_id in r.message]
+    assert record.levelno == level
+
+
+def test_each_request_has_its_own_request_id(chat_client: TestClient) -> None:
+    first = post_message(chat_client).json()["metadata"]["request_id"]
+    second = chat_client.post("/conversations").json()["metadata"]["request_id"]
+
+    assert UUID(first) != UUID(second)
+
+
 def test_openapi_documents_the_chat_contract(chat_client: TestClient) -> None:
     schema = chat_client.get("/openapi.json").json()
 
@@ -853,20 +1040,43 @@ def test_openapi_documents_the_chat_contract(chat_client: TestClient) -> None:
     ] == {"$ref": "#/components/schemas/ConversationResponse"}
 
 
+def test_openapi_documents_error_responses(chat_client: TestClient) -> None:
+    schema = chat_client.get("/openapi.json").json()
+
+    expected = {
+        "/chat": {"404", "409", "422", "500", "503"},
+        "/conversations": {"500"},
+    }
+    for path, statuses in expected.items():
+        responses = schema["paths"][path]["post"]["responses"]
+        errors = {
+            status: r for status, r in responses.items() if not status.startswith("2")
+        }
+        assert set(errors) == statuses
+        for response in errors.values():
+            assert response["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/ApiErrorResponse"
+            }
+    assert "HTTPValidationError" not in schema["components"]["schemas"]
+
+
 # End to end.
 
 
 class ScriptedLLMProvider:
     """Answers every interpretation with ``intent`` and every collection
-    request with details; both carry ``values``."""
+    request with details; both carry ``values``. Raises ``error`` when set."""
 
     def __init__(self) -> None:
         self.intent = Intent.GET_BALANCE
         self.values: dict[str, Any] = {}
+        self.error: Exception | None = None
 
     def generate_structured[T: BaseModel](
         self, *, instructions: str, input_text: str, output_type: type[T]
     ) -> T:
+        if self.error is not None:
+            raise self.error
         output: dict[str, Any] = dict.fromkeys(output_type.model_fields)
         if "kind" in output:
             output["kind"] = "DETAILS"
@@ -956,3 +1166,30 @@ def test_transfer_round_trip_over_http(
     with Session(test_container.engine) as session:
         balance = session.get_one(AccountModel, SAVINGS.id).balance
     assert balance == Decimal("125000.50")
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("migrated_engine")
+def test_unknown_conversation_over_http(test_container: Container) -> None:
+    with TestClient(create_app(test_container)) as client:
+        response = client.post(
+            "/chat", json={"conversation_id": str(uuid4()), "message": "Hola"}
+        )
+
+    assert_api_error(response, 404, "CONVERSATION_NOT_FOUND")
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("seeded")
+def test_unavailable_llm_over_http(
+    test_container: Container, scripted: ScriptedLLMProvider
+) -> None:
+    scripted.error = LLMUnavailableError()
+    with TestClient(create_app(test_container)) as client:
+        conversation_id = client.post("/conversations").json()["conversation_id"]
+        response = client.post(
+            "/chat",
+            json={"conversation_id": conversation_id, "message": "¿Cuánta plata?"},
+        )
+
+    assert_api_error(response, 503, "SERVICE_UNAVAILABLE")
