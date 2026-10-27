@@ -156,6 +156,8 @@ Example:
 }
 ```
 
+An empty or whitespace-only `message` is an invalid request.
+
 Free-text messages may require LLM interpretation.
 
 The backend is responsible for determining:
@@ -249,6 +251,8 @@ Payload:
 none
 ```
 
+`payload` is omitted or `null`; an object payload is invalid.
+
 Example:
 
 ```json
@@ -282,6 +286,8 @@ An interaction with an incompatible or malformed payload is an API error.
 
 The payload structure is determined by the interaction type and must not be
 treated as an unrestricted arbitrary object.
+
+Unknown request or payload fields are invalid.
 
 ---
 
@@ -596,6 +602,8 @@ Example:
 }
 ```
 
+`bank_name` is `null` when unknown.
+
 Sensitive or unnecessary banking identifiers must not be exposed merely for
 display purposes.
 
@@ -619,6 +627,7 @@ Example:
       "operation_id": "5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d",
       "title": "Confirm transfer",
       "summary": {
+        "type": "TRANSFER",
         "amount": {
           "amount": "25000.00",
           "currency": "ARS"
@@ -636,6 +645,28 @@ Example:
         }
       ]
     }
+  }
+}
+```
+
+`summary.type` defines the summary's shape:
+
+```text
+TRANSFER → amount: Money, beneficiary: string
+CARD     → card: the card, as in CARD_LIST
+```
+
+A card freeze or unfreeze summary:
+
+```json
+{
+  "type": "CARD",
+  "card": {
+    "id": "16e39f21-93b5-48b5-a8dc-90ad03ea5dd1",
+    "brand": "VISA",
+    "type": "DEBIT",
+    "last_four": "4821",
+    "status": "ACTIVE"
   }
 }
 ```
@@ -826,7 +857,8 @@ Money
 └── currency: Currency
 ```
 
-JSON represents the decimal amount as a string:
+JSON represents the decimal amount as a string with exactly two decimal
+places:
 
 ```json
 {
@@ -836,6 +868,8 @@ JSON represents the decimal amount as a string:
 ```
 
 Financial amounts must not be transported as binary floating-point values.
+An amount with more than two decimal places is never rounded; the backend
+rejects it.
 
 ---
 
