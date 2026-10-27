@@ -239,7 +239,7 @@ class ConversationEngine:
                 else:
                     resolved = interpretation
                 query = (
-                    self._router.prepare(resolved)
+                    self._router.prepare(resolved, now)
                     if isinstance(resolved, Interpretation)
                     else resolved
                 )

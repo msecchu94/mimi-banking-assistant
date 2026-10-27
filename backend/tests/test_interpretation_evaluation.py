@@ -9,6 +9,7 @@ from pydantic import BaseModel, SecretStr
 import mimi.evaluation.__main__ as runner
 from mimi.application.errors import LLMInvalidResponseError, LLMUnavailableError
 from mimi.application.interpretation import (
+    CalendarMonth,
     FollowUp,
     Intent,
     Interpretation,
@@ -150,6 +151,31 @@ def test_loads_cases_as_expected_interpretations(tmp_path: Path) -> None:
     )
 
 
+def test_loads_calendar_month_periods(tmp_path: Path) -> None:
+    line = case_line(
+        expected={
+            "intent": "COMPARE_EXPENSES",
+            "period": {"month": 10, "year": 2025},
+            "comparison_period": {"month": 9, "year": None},
+        }
+    )
+
+    [case] = load_dataset(write_dataset(tmp_path, [line])).cases
+
+    assert case.expected == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=CalendarMonth(10, 2025),
+        comparison_period=CalendarMonth(9),
+    )
+
+
+def test_rejects_out_of_range_calendar_month(tmp_path: Path) -> None:
+    line = case_line(expected={"intent": "ANALYZE_EXPENSES", "period": {"month": 13}})
+
+    with pytest.raises(DatasetError, match=":1:"):
+        load_dataset(write_dataset(tmp_path, [line]))
+
+
 def test_loads_flagged_fields_as_sets(tmp_path: Path) -> None:
     line = case_line(
         expected={
@@ -250,7 +276,7 @@ def test_rejects_empty_and_missing_datasets(tmp_path: Path) -> None:
 def test_committed_dataset_is_valid() -> None:
     dataset = load_dataset(runner.DEFAULT_DATASET)
 
-    assert dataset.version == "v1"
+    assert dataset.version == "v2"
     assert len(dataset.cases) >= 60
     assert {c.expected.intent for c in dataset.cases} == set(Intent)
 
@@ -334,6 +360,20 @@ def test_follow_up_is_serialized_with_a_marker_instead_of_an_intent() -> None:
         "category": "DINING",
         "relative_period": "PREVIOUS",
         "unsupported_fields": ["transaction_type"],
+    }
+
+
+def test_calendar_month_is_serialized_in_the_dataset_format() -> None:
+    interpretation = Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=CalendarMonth(10),
+        comparison_period=CalendarMonth(9, 2025),
+    )
+
+    assert interpretation_to_json(interpretation) == {
+        "intent": "COMPARE_EXPENSES",
+        "period": {"month": 10, "year": None},
+        "comparison_period": {"month": 9, "year": 2025},
     }
 
 

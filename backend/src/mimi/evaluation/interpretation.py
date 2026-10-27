@@ -24,10 +24,12 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from mimi.application.errors import LLMInvalidResponseError, LLMUnavailableError
 from mimi.application.interpretation import (
+    CalendarMonth,
     FollowUp,
     Intent,
     Interpretation,
     PeriodReference,
+    TemporalReference,
 )
 from mimi.application.llm import LLMProvider
 from mimi.application.use_cases.interpret_message import (
@@ -69,6 +71,16 @@ class Dataset:
     cases: tuple[EvaluationCase, ...]
 
 
+class _ExpectedMonth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    month: int
+    year: int | None = None
+
+
+type _ExpectedPeriod = PeriodReference | _ExpectedMonth
+
+
 class _ExpectedLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -79,8 +91,8 @@ class _ExpectedLine(BaseModel):
     card_reference: str | None = None
     category: TransactionCategory | None = None
     transaction_type: TransactionType | None = None
-    period: PeriodReference | None = None
-    comparison_period: PeriodReference | None = None
+    period: _ExpectedPeriod | None = None
+    comparison_period: _ExpectedPeriod | None = None
     invalid_fields: list[str] = []
     unsupported_fields: list[str] = []
 
@@ -173,11 +185,17 @@ def _to_interpretation(raw: _ExpectedLine) -> Interpretation:
         card_reference=raw.card_reference,
         category=raw.category,
         transaction_type=raw.transaction_type,
-        period=raw.period,
-        comparison_period=raw.comparison_period,
+        period=_to_period(raw.period),
+        comparison_period=_to_period(raw.comparison_period),
         invalid_fields=frozenset(raw.invalid_fields),
         unsupported_fields=frozenset(raw.unsupported_fields),
     )
+
+
+def _to_period(raw: _ExpectedPeriod | None) -> TemporalReference | None:
+    if isinstance(raw, _ExpectedMonth):
+        return CalendarMonth(raw.month, raw.year)
+    return raw
 
 
 def _parse_amount(text: str) -> Decimal:
@@ -395,6 +413,8 @@ def interpretation_to_json(
             data[name] = sorted(value)
         elif isinstance(value, Decimal | StrEnum):
             data[name] = str(value)
+        elif isinstance(value, CalendarMonth):
+            data[name] = {"month": value.month, "year": value.year}
         else:
             data[name] = value
     return data

@@ -33,6 +33,37 @@ class PeriodReference(StrEnum):
     PREVIOUS_MONTH = "PREVIOUS_MONTH"
 
 
+# Years a calendar month may name: whole months whose local bounds stay within
+# ``datetime``'s range in any timezone.
+MIN_CALENDAR_YEAR = 2
+MAX_CALENDAR_YEAR = 9998
+
+
+@dataclass(frozen=True)
+class CalendarMonth:
+    """A named calendar month, as the user referred to it.
+
+    ``year`` is ``None`` when the user did not state one; the application
+    anchors it to a concrete year before the month is used. Construction raises
+    ``ValueError`` for a month outside 1-12 or a year outside the supported
+    range.
+    """
+
+    month: int
+    year: int | None = None
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.month <= 12:
+            raise ValueError("month must be between 1 and 12")
+        if self.year is not None and not (
+            MIN_CALENDAR_YEAR <= self.year <= MAX_CALENDAR_YEAR
+        ):
+            raise ValueError("year is out of the supported range")
+
+
+type TemporalReference = PeriodReference | CalendarMonth
+
+
 @dataclass(frozen=True)
 class Interpretation:
     """Validated candidate interpretation of a single message.
@@ -42,7 +73,7 @@ class Interpretation:
     Only fields relevant to ``intent`` are set. ``invalid_fields`` names fields
     the model extracted with a malformed value, which were discarded.
     ``unsupported_fields`` names fields the user stated with a value V1 cannot
-    represent (e.g. another currency, a named month or several categories);
+    represent (e.g. another currency, a date range or several categories);
     those fields are unset.
 
     For ``COMPARE_EXPENSES``, ``period`` is the period of interest and
@@ -56,8 +87,8 @@ class Interpretation:
     card_reference: str | None = None
     category: TransactionCategory | None = None
     transaction_type: TransactionType | None = None
-    period: PeriodReference | None = None
-    comparison_period: PeriodReference | None = None
+    period: TemporalReference | None = None
+    comparison_period: TemporalReference | None = None
     invalid_fields: frozenset[str] = field(default_factory=frozenset)
     unsupported_fields: frozenset[str] = field(default_factory=frozenset)
 
@@ -77,12 +108,14 @@ class FollowUp:
     conversation's context, so a ``FollowUp`` is never routed directly: it is
     first resolved into an ``Interpretation``. ``relative_period`` is the
     period relative to the one in context; it is never set together with
-    ``period``.
+    ``period``. ``comparison_period`` asks to compare the query in context
+    against that period, as in "¿Y comparado con el mes pasado?".
     """
 
     category: TransactionCategory | None = None
     transaction_type: TransactionType | None = None
-    period: PeriodReference | None = None
+    period: TemporalReference | None = None
+    comparison_period: TemporalReference | None = None
     relative_period: RelativePeriod | None = None
     invalid_fields: frozenset[str] = field(default_factory=frozenset)
     unsupported_fields: frozenset[str] = field(default_factory=frozenset)

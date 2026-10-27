@@ -30,7 +30,7 @@ from mimi.evaluation.interpretation import (
 )
 
 EVALUATION_DIR = Path(__file__).resolve().parents[3] / "evals" / "interpretation"
-DEFAULT_DATASET = EVALUATION_DIR / "dataset.v1.jsonl"
+DEFAULT_DATASET = EVALUATION_DIR / "dataset.v2.jsonl"
 REPORTS_DIR = EVALUATION_DIR / "reports"
 
 

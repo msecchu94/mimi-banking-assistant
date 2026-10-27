@@ -334,7 +334,7 @@ def _expense_comparison(comparison: ExpenseComparison) -> str:
                 changes.append(f"en {c.currency} gastaste {difference} menos")
             case ExpenseChange.UNCHANGED:
                 changes.append(f"en {c.currency} gastaste lo mismo")
-    return f"Respecto del período anterior, {_joined(changes)}."
+    return f"Respecto del período comparado, {_joined(changes)}."
 
 
 def _incomplete_query(result: IncompleteQueryResult) -> str:

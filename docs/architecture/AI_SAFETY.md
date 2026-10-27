@@ -87,13 +87,20 @@ currency, a merchant instead of a category, a relative amount, an
 unsupported period, or several values for one field) is reported as
 unsupported. It is never treated as absent or replaced with a default.
 
-V1 temporal references are symbolic and resolved to dates by the backend:
+V1 temporal references are resolved to dates by the backend. They are either
+symbolic:
 
 ```text
 TODAY · YESTERDAY · CURRENT_WEEK · PREVIOUS_WEEK · CURRENT_MONTH · PREVIOUS_MONTH
 ```
 
-Named months, years, arbitrary ranges and rolling periods are unsupported.
+or a named calendar month: a month number (1–12) and, only when the user
+states it, a year. The LLM maps the month name to its number; the backend
+validates it, chooses the year when none is stated, and computes the dates.
+
+Years without a month, arbitrary ranges, rolling periods and several months
+for one period are unsupported. A calendar month that starts in the future is
+rejected as unsupported, never treated as a period without data.
 
 ---
 
