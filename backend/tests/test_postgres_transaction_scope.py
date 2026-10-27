@@ -78,6 +78,7 @@ from mimi.infrastructure.database.models import (
     TransactionModel,
     TransferModel,
 )
+from mimi.infrastructure.database.repositories import PostgresTransferRepository
 from mimi.infrastructure.database.session import create_session_factory
 from mimi.infrastructure.database.transaction import (
     PostgresRepositories,
@@ -651,6 +652,44 @@ def test_engine_confirm_failing_revalidation_writes_nothing(
     assert turn.result.operation == operation
     assert isinstance(turn.result.error, InsufficientFundsError)
     assert financial_state(session_factory, seed) == (Decimal("100.00"), 0, 0)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+
+def test_engine_confirm_interrupted_after_the_first_write_writes_nothing(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+    waiting = stored_flow(session_factory, seed, conversation_id)
+
+    # The transfer fails to be recorded after the balance was updated.
+    def interrupt(*args: object) -> None:
+        raise ExecutionInterrupted
+
+    monkeypatch.setattr(PostgresTransferRepository, "add", interrupt)
+
+    with pytest.raises(ExecutionInterrupted):
+        engine.handle_interaction(
+            seed.customer_id, conversation_id, Confirm(OPERATION_ID)
+        )
+
+    assert financial_state(session_factory, seed) == (Decimal("150000.50"), 0, 0)
+    assert stored_flow(session_factory, seed, conversation_id) == waiting
+
+    monkeypatch.undo()
+    retried = engine.handle_interaction(
+        seed.customer_id, conversation_id, Confirm(OPERATION_ID)
+    )
+
+    assert isinstance(retried.result, OperationCompletedResult)
+    assert financial_state(session_factory, seed) == (Decimal("125000.50"), 1, 1)
     assert stored_flow(session_factory, seed, conversation_id) == (
         ConversationFlowState.READY,
         None,

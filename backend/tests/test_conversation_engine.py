@@ -2149,6 +2149,95 @@ def test_confirm_during_interpretation_rejects_the_correction(
     assert scope.repositories.messages.messages == []
 
 
+# Safe-action edge cases.
+
+
+@pytest.mark.parametrize("content", ["Sí", "Dale, hacelo", "Confirmo"])
+@pytest.mark.parametrize("kind", ["OTHER", "DETAILS"])
+@pytest.mark.parametrize("intent", ["UNKNOWN", "GENERAL_CONVERSATION"])
+def test_free_text_while_waiting_never_executes(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+    content: str,
+    kind: str,
+    intent: str,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+    llm.collection_output = collection_output(kind=kind)
+
+    turn = send(engine, llm, conversation_id, content, model_output(intent=intent))
+
+    assert turn.result == UnhandledIntentResult(Intent(intent))
+    assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        LAURA_25000,
+    )
+    assert executable.transfers.transfers == []
+    assert balance(scope) == SAVINGS.balance
+
+
+def test_restated_identical_details_require_a_new_confirmation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+
+    turn = reply(
+        engine,
+        llm,
+        conversation_id,
+        "Sí, mandale los 25000",
+        collection_output(amount="25000.00"),
+    )
+
+    restated = awaiting(turn, LAURA_25000)
+    assert restated.operation_id != LAURA_25000.operation_id
+    assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        restated,
+    )
+    assert executable.transfers.transfers == []
+
+    with pytest.raises(InvalidInteractionError):
+        interact(engine, llm, conversation_id, confirm(LAURA_25000))
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        restated,
+    )
+    assert executable.transfers.transfers == []
+    assert balance(scope) == SAVINGS.balance
+
+
+def test_confirm_after_failed_revalidation_executes_nothing(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+    executable.accounts.accounts = [
+        replace(SAVINGS, balance=Money(Decimal("100.00"), Currency.ARS))
+    ]
+    failed = interact(engine, llm, conversation_id, confirm(LAURA_25000))
+    assert isinstance(failed.result, OperationFailedResult)
+    # The funds are available again.
+    executable.accounts.accounts = [SAVINGS]
+
+    turn = interact(engine, llm, conversation_id, confirm(LAURA_25000))
+
+    assert turn.result == NoPendingOperationResult(confirm(LAURA_25000))
+    assert turn.flow_state is ConversationFlowState.READY
+    assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
+    assert executable.transfers.transfers == []
+    assert balance(scope) == SAVINGS.balance
+
+
 # Closing.
 
 
