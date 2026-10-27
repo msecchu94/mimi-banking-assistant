@@ -21,8 +21,14 @@ from mimi.application.conversation_results import (
     NoPendingOperationResult,
     OperationCancelledResult,
     OperationCompletedResult,
+    OperationFailedResult,
+    TransactionsResult,
 )
-from mimi.application.errors import ConversationClosedError, LLMUnavailableError
+from mimi.application.errors import (
+    ConversationClosedError,
+    InsufficientFundsError,
+    LLMUnavailableError,
+)
 from mimi.application.interactions import Cancel, Confirm, SelectCard
 from mimi.application.interpretation import Intent
 from mimi.application.llm import LLMProvider
@@ -89,10 +95,12 @@ class ExecutionInterrupted(Exception):
 
 
 class ScriptedLLMProvider:
-    """Answers every interpretation request with a canned intent."""
+    """Answers every interpretation request with a canned intent, and every
+    collection request with details; both carry the canned ``values``."""
 
     def __init__(self, intent: Intent = Intent.GET_BALANCE) -> None:
         self.intent = intent
+        self.values: dict[str, Any] = {}
         self.error: Exception | None = None
 
     def generate_structured[T: BaseModel](
@@ -100,20 +108,13 @@ class ScriptedLLMProvider:
     ) -> T:
         if self.error is not None:
             raise self.error
-        output: dict[str, Any] = dict.fromkeys(
-            [
-                "amount",
-                "currency",
-                "beneficiary_reference",
-                "card_reference",
-                "category",
-                "transaction_type",
-                "period",
-                "comparison_period",
-                "relative_period",
-            ]
-        )
-        return output_type.model_validate({"intent": self.intent.value, **output})
+        output: dict[str, Any] = dict.fromkeys(output_type.model_fields)
+        if "kind" in output:
+            output["kind"] = "DETAILS"
+        else:
+            output["intent"] = self.intent.value
+        output.update(self.values)
+        return output_type.model_validate(output)
 
 
 @pytest.fixture
@@ -497,6 +498,143 @@ def test_engine_close_discards_the_waiting_operation_without_executing_it(
             "150000.50"
         )
         assert session.scalar(select(func.count()).select_from(TransferModel)) == 0
+
+
+def financial_state(
+    session_factory: sessionmaker[Session], seed: Seed
+) -> tuple[Decimal, int | None, int | None]:
+    """The source balance and the number of stored transfers and transactions."""
+    with session_factory() as session:
+        return (
+            session.get_one(AccountModel, seed.account_id).balance,
+            session.scalar(select(func.count()).select_from(TransferModel)),
+            session.scalar(select(func.count()).select_from(TransactionModel)),
+        )
+
+
+def test_engine_transfer_round_trip_is_observed_by_balance_and_transactions(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+
+    # The request names no amount, so the amount is collected.
+    llm_provider.intent = Intent.TRANSFER_MONEY
+    llm_provider.values = {"beneficiary_reference": "Laura"}
+    requested = engine.handle_message(
+        seed.customer_id, conversation_id, "Transferile a Laura"
+    )
+    assert requested.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        PendingOperation(
+            PendingOperationType.TRANSFER,
+            TransferOperationData(seed.account_id, seed.beneficiary_id),
+        ),
+    )
+
+    llm_provider.values = {"amount": "25000.00"}
+    answered = engine.handle_message(seed.customer_id, conversation_id, "25000")
+    operation = PendingOperation(
+        PendingOperationType.TRANSFER,
+        TransferOperationData(seed.account_id, seed.beneficiary_id, TRANSFER_AMOUNT),
+    )
+    assert answered.intent is Intent.TRANSFER_MONEY
+    assert answered.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert isinstance(answered.result, AwaitingConfirmationResult)
+    assert answered.result.operation == operation
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        operation,
+    )
+    assert financial_state(session_factory, seed) == (Decimal("150000.50"), 0, 0)
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    confirmed = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+    assert confirmed.intent is Intent.TRANSFER_MONEY
+    assert confirmed.flow_state is ConversationFlowState.READY
+    assert isinstance(confirmed.result, OperationCompletedResult)
+    assert confirmed.result.operation == operation
+    transfer = confirmed.result.transfer
+    assert transfer is not None
+    assert transfer == Transfer(
+        id=transfer.id,
+        source_account_id=seed.account_id,
+        beneficiary_id=seed.beneficiary_id,
+        amount=TRANSFER_AMOUNT,
+        status=TransferStatus.COMPLETED,
+        created_at=EXECUTED_AT,
+        executed_at=EXECUTED_AT,
+    )
+    assert stored_state(session_factory, seed, transfer.id) == (
+        Decimal("125000.50"),
+        True,
+        True,
+    )
+    assert financial_state(session_factory, seed) == (Decimal("125000.50"), 1, 1)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+    llm_provider.error = None
+    llm_provider.values = {}
+    llm_provider.intent = Intent.GET_BALANCE
+    balances = engine.handle_message(seed.customer_id, conversation_id, "Saldo")
+    assert isinstance(balances.result, BalancesResult)
+    [account] = balances.result.accounts
+    assert account.balance == BALANCE_AFTER_TRANSFER
+
+    llm_provider.intent = Intent.GET_TRANSACTIONS
+    movements = engine.handle_message(seed.customer_id, conversation_id, "Movimientos")
+    assert isinstance(movements.result, TransactionsResult)
+    [transaction] = movements.result.transactions
+    assert transaction == Transaction(
+        id=transaction.id,
+        account_id=seed.account_id,
+        amount=TRANSFER_AMOUNT,
+        type=TransactionType.DEBIT,
+        category=TransactionCategory.TRANSFER,
+        description="Transfer to Laura",
+        occurred_at=EXECUTED_AT,
+        transfer_id=transfer.id,
+    )
+
+
+def test_engine_confirm_failing_revalidation_writes_nothing(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = engine.start(seed.customer_id).conversation.id
+    llm_provider.intent = Intent.TRANSFER_MONEY
+    llm_provider.values = {"amount": "25000.00", "beneficiary_reference": "Laura"}
+    requested = engine.handle_message(
+        seed.customer_id, conversation_id, "Transferile 25000 a Laura"
+    )
+    assert requested.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert isinstance(requested.result, AwaitingConfirmationResult)
+    operation = requested.result.operation
+
+    # The balance dropped elsewhere after pre-validation.
+    with session_factory.begin() as session:
+        session.get_one(AccountModel, seed.account_id).balance = Decimal("100.00")
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    turn = engine.handle_interaction(seed.customer_id, conversation_id, Confirm())
+
+    assert turn.flow_state is ConversationFlowState.READY
+    assert isinstance(turn.result, OperationFailedResult)
+    assert turn.result.operation == operation
+    assert isinstance(turn.result.error, InsufficientFundsError)
+    assert financial_state(session_factory, seed) == (Decimal("100.00"), 0, 0)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
 
 
 @dataclass(frozen=True)
