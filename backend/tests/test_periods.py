@@ -3,9 +3,15 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from mimi.application.interpretation import PeriodReference
+from mimi.application.interpretation import (
+    MIN_CALENDAR_YEAR,
+    CalendarMonth,
+    PeriodReference,
+)
 from mimi.application.periods import (
+    anchor,
     current_counterpart,
+    is_future,
     previous_counterpart,
     resolve_period,
 )
@@ -168,3 +174,102 @@ def test_current_periods_have_no_current_counterpart(
     reference: PeriodReference,
 ) -> None:
     assert current_counterpart(reference) is None
+
+
+# Calendar months. NOW is Oct 15th, 2026.
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected"),
+    [
+        (CalendarMonth(10, 2025), Period(local(2025, 10, 1), local(2025, 11, 1))),
+        (CalendarMonth(2, 2024), Period(local(2024, 2, 1), local(2024, 3, 1))),
+        (CalendarMonth(12, 2025), Period(local(2025, 12, 1), local(2026, 1, 1))),
+    ],
+)
+def test_calendar_month_resolves_to_the_whole_month(
+    reference: CalendarMonth, expected: Period
+) -> None:
+    assert resolve_period(reference, NOW, BUENOS_AIRES) == expected
+
+
+@pytest.mark.parametrize(
+    ("month", "year"),
+    [(1, 2026), (9, 2026), (10, 2026), (11, 2025), (12, 2025)],
+)
+def test_month_without_year_is_its_latest_occurrence_not_after_this_month(
+    month: int, year: int
+) -> None:
+    assert anchor(CalendarMonth(month), NOW, BUENOS_AIRES) == CalendarMonth(month, year)
+    assert resolve_period(CalendarMonth(month), NOW, BUENOS_AIRES) == resolve_period(
+        CalendarMonth(month, year), NOW, BUENOS_AIRES
+    )
+
+
+def test_month_is_anchored_in_the_given_timezone() -> None:
+    # Nov 1st, 01:30 UTC is still Oct 31st in Buenos Aires.
+    now = datetime(2026, 11, 1, 1, 30, tzinfo=UTC)
+
+    assert anchor(CalendarMonth(11), now, BUENOS_AIRES) == CalendarMonth(11, 2025)
+    assert anchor(CalendarMonth(11), now, ZoneInfo("UTC")) == CalendarMonth(11, 2026)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [PeriodReference.CURRENT_MONTH, CalendarMonth(3, 2024)],
+)
+def test_anchoring_keeps_other_references(
+    reference: PeriodReference | CalendarMonth,
+) -> None:
+    assert anchor(reference, NOW, BUENOS_AIRES) == reference
+
+
+@pytest.mark.parametrize(
+    ("month", "previous"),
+    [
+        (CalendarMonth(10, 2026), CalendarMonth(9, 2026)),
+        (CalendarMonth(1, 2026), CalendarMonth(12, 2025)),
+    ],
+)
+def test_calendar_month_is_preceded_by_the_month_before(
+    month: CalendarMonth, previous: CalendarMonth
+) -> None:
+    assert previous_counterpart(month) == previous
+
+
+@pytest.mark.parametrize(
+    "month", [CalendarMonth(10), CalendarMonth(1, MIN_CALENDAR_YEAR)]
+)
+def test_unanchored_or_earliest_month_has_no_previous_counterpart(
+    month: CalendarMonth,
+) -> None:
+    assert previous_counterpart(month) is None
+
+
+def test_calendar_month_is_compared_with_the_current_month() -> None:
+    assert current_counterpart(CalendarMonth(8, 2026)) is PeriodReference.CURRENT_MONTH
+
+
+@pytest.mark.parametrize(
+    ("reference", "future"),
+    [
+        (CalendarMonth(11, 2026), True),
+        (CalendarMonth(1, 2027), True),
+        (CalendarMonth(10, 2026), False),
+        (CalendarMonth(11), False),
+        (PeriodReference.CURRENT_MONTH, False),
+        (PeriodReference.TODAY, False),
+    ],
+)
+def test_only_months_starting_after_now_are_future(
+    reference: PeriodReference | CalendarMonth, future: bool
+) -> None:
+    assert is_future(reference, NOW, BUENOS_AIRES) is future
+
+
+@pytest.mark.parametrize(("month", "year"), [(0, None), (13, None), (1, 1), (1, 9999)])
+def test_calendar_month_rejects_out_of_range_values(
+    month: int, year: int | None
+) -> None:
+    with pytest.raises(ValueError):
+        CalendarMonth(month, year)

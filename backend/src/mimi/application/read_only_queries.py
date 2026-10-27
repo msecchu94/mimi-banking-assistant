@@ -23,9 +23,12 @@ from mimi.application.interpretation import (
     Intent,
     Interpretation,
     PeriodReference,
+    TemporalReference,
 )
 from mimi.application.periods import (
+    anchor,
     current_counterpart,
+    is_future,
     previous_counterpart,
     resolve_period,
 )
@@ -49,10 +52,11 @@ _READ_ONLY_INTENTS = frozenset(
 )
 
 # Values a follow-up may state, and so inherit, for each query it can continue.
+# Stating a comparison period continues an expense query as a comparison.
 _INHERITABLE_FIELDS: dict[Intent, frozenset[str]] = {
     Intent.GET_TRANSACTIONS: frozenset({"category", "transaction_type", "period"}),
-    Intent.ANALYZE_EXPENSES: frozenset({"category", "period"}),
-    Intent.COMPARE_EXPENSES: frozenset({"category", "period"}),
+    Intent.ANALYZE_EXPENSES: frozenset({"category", "period", "comparison_period"}),
+    Intent.COMPARE_EXPENSES: frozenset({"category", "period", "comparison_period"}),
 }
 
 type PreparedQuery = Interpretation | IncompleteQueryResult | UnhandledIntentResult
@@ -63,14 +67,18 @@ class ReadOnlyQueryRouter:
 
     Use Cases run on the given repositories, so their reads belong to the
     caller's transaction. Nothing is written. A query whose interpretation
-    carries unsupported or invalid values, or lacks a required period, is not
-    executed. Every other intent is left unhandled and executes no use case.
-    A follow-up is first resolved against the conversation's context into an
-    ordinary interpretation; it is never executed as such.
+    carries unsupported or invalid values or a future calendar month, or lacks
+    a required period, is not executed. Every other intent is left unhandled
+    and executes no use case. A follow-up is first resolved against the
+    conversation's context into an ordinary interpretation; it is never
+    executed as such.
 
     Period defaults: expense analysis covers the current month; an expense
     comparison with one side omitted uses its matching current or previous
-    period at the same scale; transactions are not filtered by date.
+    period at the same scale, and a calendar month is compared with the
+    current month; transactions are not filtered by date. A calendar month
+    without a year is anchored to its latest occurrence not after the current
+    month before anything else uses it.
     """
 
     def __init__(self, timezone: ZoneInfo) -> None:
@@ -84,14 +92,15 @@ class ReadOnlyQueryRouter:
         now: datetime,
     ) -> TurnResult:
         """Prepare ``interpretation`` and execute it when it is complete."""
-        query = self.prepare(interpretation)
+        query = self.prepare(interpretation, now)
         if not isinstance(query, Interpretation):
             return query
         return self.execute(repositories, customer_id, query, now)
 
-    def prepare(self, interpretation: Interpretation) -> PreparedQuery:
-        """Return the complete read-only query to execute, with period defaults
-        applied, or the result explaining why nothing is executed."""
+    def prepare(self, interpretation: Interpretation, now: datetime) -> PreparedQuery:
+        """Return the complete read-only query to execute, with calendar months
+        anchored and period defaults applied, or the result explaining why
+        nothing is executed."""
         intent = interpretation.intent
         if intent not in _READ_ONLY_INTENTS:
             return UnhandledIntentResult(intent)
@@ -101,6 +110,20 @@ class ReadOnlyQueryRouter:
                 unsupported_fields=interpretation.unsupported_fields,
                 invalid_fields=interpretation.invalid_fields,
             )
+        interpretation = replace(
+            interpretation,
+            period=self._anchor(interpretation.period, now),
+            comparison_period=self._anchor(interpretation.comparison_period, now),
+        )
+        if future := {
+            name
+            for name, reference in (
+                ("period", interpretation.period),
+                ("comparison_period", interpretation.comparison_period),
+            )
+            if reference is not None and is_future(reference, now, self._timezone)
+        }:
+            return IncompleteQueryResult(intent, unsupported_fields=frozenset(future))
         match intent:
             case Intent.ANALYZE_EXPENSES if interpretation.period is None:
                 return replace(interpretation, period=PeriodReference.CURRENT_MONTH)
@@ -115,10 +138,12 @@ class ReadOnlyQueryRouter:
 
         Stated values replace inherited ones; everything else is inherited. A
         relative period shifts the period in context to the preceding one at
-        the same scale. Inherited periods must still resolve to the same dates
-        as when the last query ran. A follow-up without context, with values
-        its last query does not take, or without a period to inherit or shift
-        is not resolved and executes no query.
+        the same scale. A comparison period continues an expense query as a
+        comparison of its period against the stated one. Inherited periods
+        must still resolve to the same dates as when the last query ran. A
+        follow-up without context, stating nothing, with values its last query
+        does not take, or without a period to inherit or shift is not resolved
+        and executes no query.
         """
         intent = context.last_intent
         if intent is None:
@@ -133,20 +158,23 @@ class ReadOnlyQueryRouter:
             )
         stated = _stated_fields(follow_up)
         if not stated:
-            return IncompleteQueryResult(intent, missing_fields=frozenset({"context"}))
+            return IncompleteQueryResult(intent)
         if incompatible := stated - _INHERITABLE_FIELDS.get(intent, frozenset()):
             return IncompleteQueryResult(intent, unsupported_fields=incompatible)
+
+        if intent is Intent.COMPARE_EXPENSES and follow_up.relative_period is not None:
+            return IncompleteQueryResult(
+                intent, unsupported_fields=frozenset({"period"})
+            )
+        if follow_up.comparison_period is not None:
+            intent = Intent.COMPARE_EXPENSES
 
         temporal = context.temporal
         if temporal is not None and self._is_stale(temporal, now):
             temporal = None
         period = follow_up.period
-        comparison_period = None
+        comparison_period = follow_up.comparison_period
         if follow_up.relative_period is not None:
-            if intent is Intent.COMPARE_EXPENSES:
-                return IncompleteQueryResult(
-                    intent, unsupported_fields=frozenset({"period"})
-                )
             period = None if temporal is None else previous_counterpart(temporal.period)
             if period is None:
                 return IncompleteQueryResult(
@@ -158,7 +186,8 @@ class ReadOnlyQueryRouter:
                     intent, missing_fields=frozenset({"period"})
                 )
             period = temporal.period
-            comparison_period = temporal.comparison_period
+            if comparison_period is None:
+                comparison_period = temporal.comparison_period
 
         return Interpretation(
             intent=intent,
@@ -226,8 +255,13 @@ class ReadOnlyQueryRouter:
                 return BeneficiariesResult(tuple(beneficiaries))
         raise AssertionError(f"unrouted read-only intent {intent}")
 
-    def _resolve(self, reference: PeriodReference, now: datetime) -> Period:
+    def _resolve(self, reference: TemporalReference, now: datetime) -> Period:
         return resolve_period(reference, now, self._timezone)
+
+    def _anchor(
+        self, reference: TemporalReference | None, now: datetime
+    ) -> TemporalReference | None:
+        return None if reference is None else anchor(reference, now, self._timezone)
 
     def _is_stale(self, temporal: TemporalContext, now: datetime) -> bool:
         """Whether a period in context now resolves to other dates than when
@@ -271,6 +305,7 @@ def _stated_fields(follow_up: FollowUp) -> frozenset[str]:
             ("category", follow_up.category),
             ("transaction_type", follow_up.transaction_type),
             ("period", follow_up.period or follow_up.relative_period),
+            ("comparison_period", follow_up.comparison_period),
         )
         if value is not None
     }

@@ -463,7 +463,7 @@ PRESENTATIONS = [
         ),
         Intent.COMPARE_EXPENSES,
         ConversationFlowState.READY,
-        "Respecto del período anterior, en ARS gastaste 25000.00 ARS más y "
+        "Respecto del período comparado, en ARS gastaste 25000.00 ARS más y "
         "en USD gastaste 40.00 USD menos.",
         {
             "type": "EXPENSE_COMPARISON",
@@ -529,6 +529,14 @@ PRESENTATIONS = [
         ConversationFlowState.READY,
         "Necesito que me indiques el período a comparar. "
         "Todavía no puedo usar la categoría que indicaste.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "follow_up_stating_nothing",
+        IncompleteQueryResult(Intent.ANALYZE_EXPENSES),
+        Intent.ANALYZE_EXPENSES,
+        ConversationFlowState.READY,
+        "No entendí tu mensaje. ¿Podés reformularlo?",
         {"type": "TEXT", "data": {}},
     ),
     (

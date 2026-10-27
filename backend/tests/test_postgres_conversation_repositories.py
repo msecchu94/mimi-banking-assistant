@@ -16,7 +16,7 @@ from mimi.application.conversation_context import (
     TemporalContext,
 )
 from mimi.application.errors import ConversationStateCorruptedError
-from mimi.application.interpretation import Intent, PeriodReference
+from mimi.application.interpretation import CalendarMonth, Intent, PeriodReference
 from mimi.application.pending_operations import (
     FreezeCardOperationData,
     PendingOperation,
@@ -288,6 +288,14 @@ def store_raw_context(
             transaction_type=TransactionType.CREDIT,
         ),
         ConversationContext(last_intent=Intent.GET_BALANCE),
+        ConversationContext(
+            last_intent=Intent.COMPARE_EXPENSES,
+            temporal=TemporalContext(
+                CalendarMonth(10, 2026),
+                PeriodReference.PREVIOUS_MONTH,
+                datetime(2026, 10, 9, 16, 31, 4, tzinfo=UTC),
+            ),
+        ),
     ],
 )
 def test_saved_context_round_trips(
@@ -358,8 +366,19 @@ def test_saving_empty_context_stores_an_empty_object(
                 "anchored_at": "2026-10-09T13:00:00",
             },
         },
+        {
+            "version": 1,
+            "last_intent": "ANALYZE_EXPENSES",
+            "category": None,
+            "transaction_type": None,
+            "temporal": {
+                "period": {"month": 13, "year": 2026},
+                "comparison_period": None,
+                "anchored_at": "2026-10-09T13:00:00+00:00",
+            },
+        },
     ],
-    ids=["version", "intent", "extra", "naive"],
+    ids=["version", "intent", "extra", "naive", "month"],
 )
 def test_malformed_context_loads_as_empty(
     session_factory: sessionmaker[Session], customers: Customers, raw: object

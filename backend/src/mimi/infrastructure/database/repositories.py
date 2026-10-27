@@ -20,7 +20,12 @@ from mimi.application.conversation_context import (
     TemporalContext,
 )
 from mimi.application.errors import ConversationStateCorruptedError
-from mimi.application.interpretation import Intent, PeriodReference
+from mimi.application.interpretation import (
+    CalendarMonth,
+    Intent,
+    PeriodReference,
+    TemporalReference,
+)
 from mimi.application.pending_operations import (
     FreezeCardOperationData,
     PendingField,
@@ -110,12 +115,35 @@ def _to_transaction(model: TransactionModel) -> Transaction:
     )
 
 
+class _StoredCalendarMonth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    month: int
+    year: int | None
+
+
+type _StoredPeriod = PeriodReference | _StoredCalendarMonth
+
+
 class _StoredTemporalContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    period: PeriodReference
-    comparison_period: PeriodReference | None
+    period: _StoredPeriod
+    comparison_period: _StoredPeriod | None
     anchored_at: AwareDatetime
+
+
+def _period_to_stored(reference: TemporalReference) -> _StoredPeriod:
+    if isinstance(reference, CalendarMonth):
+        return _StoredCalendarMonth(month=reference.month, year=reference.year)
+    return reference
+
+
+def _period_from_stored(stored: _StoredPeriod) -> TemporalReference:
+    """Raises ``ValueError`` for a calendar month out of range."""
+    if isinstance(stored, _StoredCalendarMonth):
+        return CalendarMonth(stored.month, stored.year)
+    return stored
 
 
 class _StoredContext(BaseModel):
@@ -142,8 +170,12 @@ def _context_to_json(context: ConversationContext) -> dict[str, Any]:
             None
             if temporal is None
             else _StoredTemporalContext(
-                period=temporal.period,
-                comparison_period=temporal.comparison_period,
+                period=_period_to_stored(temporal.period),
+                comparison_period=(
+                    None
+                    if temporal.comparison_period is None
+                    else _period_to_stored(temporal.comparison_period)
+                ),
                 anchored_at=temporal.anchored_at,
             )
         ),
@@ -163,18 +195,27 @@ def _context_from_json(data: dict[str, Any]) -> ConversationContext:
     except ValidationError:
         return EMPTY_CONTEXT
     temporal = stored.temporal
-    return ConversationContext(
-        last_intent=stored.last_intent,
-        category=stored.category,
-        transaction_type=stored.transaction_type,
-        temporal=(
-            None
-            if temporal is None
-            else TemporalContext(
-                temporal.period, temporal.comparison_period, temporal.anchored_at
-            )
-        ),
-    )
+    try:
+        return ConversationContext(
+            last_intent=stored.last_intent,
+            category=stored.category,
+            transaction_type=stored.transaction_type,
+            temporal=(
+                None
+                if temporal is None
+                else TemporalContext(
+                    _period_from_stored(temporal.period),
+                    (
+                        None
+                        if temporal.comparison_period is None
+                        else _period_from_stored(temporal.comparison_period)
+                    ),
+                    temporal.anchored_at,
+                )
+            ),
+        )
+    except ValueError:
+        return EMPTY_CONTEXT
 
 
 def _pending_operation_columns(

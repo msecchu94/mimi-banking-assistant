@@ -23,6 +23,7 @@ from mimi.application.conversation_results import (
     UnhandledIntentResult,
 )
 from mimi.application.interpretation import (
+    CalendarMonth,
     FollowUp,
     Intent,
     Interpretation,
@@ -630,6 +631,91 @@ def test_invalid_fields_execute_no_query(
     assert repositories.reads == []
 
 
+def test_expense_analysis_of_a_calendar_month(
+    router: ReadOnlyQueryRouter, repositories: FakeRepositories
+) -> None:
+    interpretation = Interpretation(
+        intent=Intent.ANALYZE_EXPENSES, period=CalendarMonth(9, 2026)
+    )
+
+    result = route(router, repositories, interpretation)
+
+    assert isinstance(result, ExpenseAnalysisResult)
+    assert result.analysis.period == SEPTEMBER
+    [ars_expenses] = result.analysis.currencies
+    assert ars_expenses.total == ars("20000.00")
+
+
+@pytest.mark.parametrize(
+    ("period", "comparison_period", "expected_current", "expected_previous"),
+    [
+        (CalendarMonth(10), CalendarMonth(9), OCTOBER, SEPTEMBER),
+        (CalendarMonth(9), CalendarMonth(10), SEPTEMBER, OCTOBER),
+        (None, CalendarMonth(9), OCTOBER, SEPTEMBER),
+        (CalendarMonth(10), None, OCTOBER, SEPTEMBER),
+        (PeriodReference.CURRENT_MONTH, CalendarMonth(9, 2026), OCTOBER, SEPTEMBER),
+    ],
+)
+def test_expense_comparison_of_calendar_months(
+    router: ReadOnlyQueryRouter,
+    repositories: FakeRepositories,
+    period: PeriodReference | CalendarMonth | None,
+    comparison_period: PeriodReference | CalendarMonth | None,
+    expected_current: Period,
+    expected_previous: Period,
+) -> None:
+    interpretation = Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=period,
+        comparison_period=comparison_period,
+    )
+
+    result = route(router, repositories, interpretation)
+
+    assert isinstance(result, ExpenseComparisonResult)
+    assert result.comparison.current.period == expected_current
+    assert result.comparison.previous.period == expected_previous
+
+
+@pytest.mark.parametrize(
+    ("interpretation", "future"),
+    [
+        (
+            Interpretation(
+                intent=Intent.ANALYZE_EXPENSES, period=CalendarMonth(11, 2026)
+            ),
+            {"period"},
+        ),
+        (
+            Interpretation(
+                intent=Intent.GET_TRANSACTIONS, period=CalendarMonth(1, 2027)
+            ),
+            {"period"},
+        ),
+        (
+            Interpretation(
+                intent=Intent.COMPARE_EXPENSES,
+                period=CalendarMonth(12, 2026),
+                comparison_period=CalendarMonth(11, 2026),
+            ),
+            {"period", "comparison_period"},
+        ),
+    ],
+)
+def test_future_calendar_month_executes_no_query(
+    router: ReadOnlyQueryRouter,
+    repositories: FakeRepositories,
+    interpretation: Interpretation,
+    future: set[str],
+) -> None:
+    result = route(router, repositories, interpretation)
+
+    assert result == IncompleteQueryResult(
+        interpretation.intent, unsupported_fields=frozenset(future)
+    )
+    assert repositories.reads == []
+
+
 def test_unsupported_side_of_comparison_is_not_derived(
     router: ReadOnlyQueryRouter, repositories: FakeRepositories
 ) -> None:
@@ -682,7 +768,8 @@ def test_prepare_applies_expense_analysis_default_period(
     query = router.prepare(
         Interpretation(
             intent=Intent.ANALYZE_EXPENSES, category=TransactionCategory.DINING
-        )
+        ),
+        NOW,
     )
 
     assert query == Interpretation(
@@ -697,13 +784,55 @@ def test_prepare_derives_omitted_comparison_side(router: ReadOnlyQueryRouter) ->
         Interpretation(
             intent=Intent.COMPARE_EXPENSES,
             comparison_period=PeriodReference.PREVIOUS_WEEK,
-        )
+        ),
+        NOW,
     )
 
     assert query == Interpretation(
         intent=Intent.COMPARE_EXPENSES,
         period=PeriodReference.CURRENT_WEEK,
         comparison_period=PeriodReference.PREVIOUS_WEEK,
+    )
+
+
+@pytest.mark.parametrize(
+    ("period", "anchored"),
+    [
+        (CalendarMonth(10), CalendarMonth(10, 2026)),
+        (CalendarMonth(11), CalendarMonth(11, 2025)),
+        (CalendarMonth(11, 2024), CalendarMonth(11, 2024)),
+    ],
+)
+def test_prepare_anchors_calendar_months_to_a_year(
+    router: ReadOnlyQueryRouter, period: CalendarMonth, anchored: CalendarMonth
+) -> None:
+    query = router.prepare(
+        Interpretation(
+            intent=Intent.COMPARE_EXPENSES,
+            period=period,
+            comparison_period=CalendarMonth(1),
+        ),
+        NOW,
+    )
+
+    assert query == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=anchored,
+        comparison_period=CalendarMonth(1, 2026),
+    )
+
+
+def test_prepare_derives_previous_month_after_anchoring(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    query = router.prepare(
+        Interpretation(intent=Intent.COMPARE_EXPENSES, period=CalendarMonth(1)), NOW
+    )
+
+    assert query == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=CalendarMonth(1, 2026),
+        comparison_period=CalendarMonth(12, 2025),
     )
 
 
@@ -714,7 +843,7 @@ def test_prepare_keeps_transactions_unfiltered_by_date(
         intent=Intent.GET_TRANSACTIONS, transaction_type=TransactionType.CREDIT
     )
 
-    assert router.prepare(interpretation) == interpretation
+    assert router.prepare(interpretation, NOW) == interpretation
 
 
 # Follow-ups. NOW is Oct 31st, 22:30 in Buenos Aires.
@@ -727,9 +856,9 @@ LAST_WEEK = datetime(2026, 10, 25, 12, 0, tzinfo=BUENOS_AIRES)
 
 def context(
     intent: Intent,
-    period: PeriodReference | None = None,
+    period: PeriodReference | CalendarMonth | None = None,
     *,
-    comparison_period: PeriodReference | None = None,
+    comparison_period: PeriodReference | CalendarMonth | None = None,
     category: TransactionCategory | None = None,
     transaction_type: TransactionType | None = None,
     anchored_at: datetime = EARLIER_TODAY,
@@ -832,14 +961,14 @@ def test_follow_up_without_context_is_unresolved(router: ReadOnlyQueryRouter) ->
     )
 
 
-def test_follow_up_stating_nothing_is_unresolved(router: ReadOnlyQueryRouter) -> None:
+def test_follow_up_stating_nothing_is_unresolved_without_blaming_context(
+    router: ReadOnlyQueryRouter,
+) -> None:
     last = context(Intent.ANALYZE_EXPENSES, PeriodReference.CURRENT_MONTH)
 
     resolved = router.resolve_follow_up(FollowUp(), last, NOW)
 
-    assert resolved == IncompleteQueryResult(
-        Intent.ANALYZE_EXPENSES, missing_fields=frozenset({"context"})
-    )
+    assert resolved == IncompleteQueryResult(Intent.ANALYZE_EXPENSES)
 
 
 @pytest.mark.parametrize(
@@ -860,6 +989,11 @@ def test_follow_up_stating_nothing_is_unresolved(router: ReadOnlyQueryRouter) ->
             context(Intent.GET_BENEFICIARIES),
             FollowUp(category=TransactionCategory.DINING),
             {"category"},
+        ),
+        (
+            context(Intent.GET_TRANSACTIONS, PeriodReference.CURRENT_MONTH),
+            FollowUp(comparison_period=PeriodReference.PREVIOUS_MONTH),
+            {"comparison_period"},
         ),
     ],
 )
@@ -1003,7 +1137,7 @@ def test_comparison_follow_up_period_rederives_the_compared_side(
     resolved = router.resolve_follow_up(follow_up, COMPARISON, NOW)
 
     assert isinstance(resolved, Interpretation)
-    assert router.prepare(resolved) == Interpretation(
+    assert router.prepare(resolved, NOW) == Interpretation(
         intent=Intent.COMPARE_EXPENSES,
         category=TransactionCategory.DINING,
         period=PeriodReference.CURRENT_WEEK,
@@ -1019,7 +1153,7 @@ def test_comparison_follow_up_period_without_a_pair_is_incomplete(
     resolved = router.resolve_follow_up(follow_up, COMPARISON, NOW)
 
     assert isinstance(resolved, Interpretation)
-    assert router.prepare(resolved) == IncompleteQueryResult(
+    assert router.prepare(resolved, NOW) == IncompleteQueryResult(
         Intent.COMPARE_EXPENSES, missing_fields=frozenset({"comparison_period"})
     )
 
@@ -1031,4 +1165,136 @@ def test_comparison_follow_up_with_previous_period_is_unresolved(
 
     assert resolved == IncompleteQueryResult(
         Intent.COMPARE_EXPENSES, unsupported_fields=frozenset({"period"})
+    )
+
+
+# Follow-ups that turn an expense query into a comparison.
+
+
+@pytest.mark.parametrize(
+    ("period", "comparison_period"),
+    [
+        (PeriodReference.CURRENT_MONTH, PeriodReference.PREVIOUS_MONTH),
+        (CalendarMonth(9, 2026), CalendarMonth(8)),
+    ],
+)
+def test_comparison_follow_up_compares_the_analysis_in_context(
+    router: ReadOnlyQueryRouter,
+    period: PeriodReference | CalendarMonth,
+    comparison_period: PeriodReference | CalendarMonth,
+) -> None:
+    last = context(
+        Intent.ANALYZE_EXPENSES, period, category=TransactionCategory.GROCERIES
+    )
+    follow_up = FollowUp(comparison_period=comparison_period)
+
+    resolved = router.resolve_follow_up(follow_up, last, NOW)
+
+    assert resolved == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        category=TransactionCategory.GROCERIES,
+        period=period,
+        comparison_period=comparison_period,
+    )
+
+
+def test_comparison_follow_up_of_an_analysis_executes_the_comparison(
+    router: ReadOnlyQueryRouter, repositories: FakeRepositories
+) -> None:
+    last = context(
+        Intent.ANALYZE_EXPENSES,
+        PeriodReference.CURRENT_MONTH,
+        category=TransactionCategory.GROCERIES,
+    )
+    follow_up = FollowUp(comparison_period=PeriodReference.PREVIOUS_MONTH)
+
+    resolved = router.resolve_follow_up(follow_up, last, NOW)
+    assert isinstance(resolved, Interpretation)
+    result = route(router, repositories, resolved)
+
+    assert isinstance(result, ExpenseComparisonResult)
+    assert result.comparison.current.period == OCTOBER
+    assert result.comparison.previous.period == SEPTEMBER
+    assert result.comparison.current.category is TransactionCategory.GROCERIES
+    [ars_comparison] = result.comparison.currencies
+    assert ars_comparison.current_total == ars("30000.00")
+    assert ars_comparison.previous_total == ars("20000.00")
+
+
+def test_comparison_follow_up_replaces_the_compared_period(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    follow_up = FollowUp(comparison_period=CalendarMonth(8, 2026))
+
+    resolved = router.resolve_follow_up(follow_up, COMPARISON, NOW)
+
+    assert resolved == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        category=TransactionCategory.DINING,
+        period=PeriodReference.CURRENT_MONTH,
+        comparison_period=CalendarMonth(8, 2026),
+    )
+
+
+def test_comparison_follow_up_with_both_periods_inherits_only_the_category(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    last = context(
+        Intent.ANALYZE_EXPENSES,
+        PeriodReference.CURRENT_WEEK,
+        category=TransactionCategory.FUEL,
+    )
+    follow_up = FollowUp(period=CalendarMonth(10), comparison_period=CalendarMonth(9))
+
+    resolved = router.resolve_follow_up(follow_up, last, NOW)
+
+    assert resolved == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        category=TransactionCategory.FUEL,
+        period=CalendarMonth(10),
+        comparison_period=CalendarMonth(9),
+    )
+
+
+def test_comparison_follow_up_does_not_inherit_a_stale_period(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    last = context(
+        Intent.ANALYZE_EXPENSES, PeriodReference.CURRENT_MONTH, anchored_at=LAST_MONTH
+    )
+    follow_up = FollowUp(comparison_period=PeriodReference.PREVIOUS_MONTH)
+
+    resolved = router.resolve_follow_up(follow_up, last, NOW)
+
+    assert resolved == IncompleteQueryResult(
+        Intent.COMPARE_EXPENSES, missing_fields=frozenset({"period"})
+    )
+
+
+def test_previous_period_follow_up_shifts_a_calendar_month(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    last = context(Intent.ANALYZE_EXPENSES, CalendarMonth(1, 2026))
+
+    resolved = router.resolve_follow_up(PREVIOUS, last, NOW)
+
+    assert resolved == Interpretation(
+        intent=Intent.ANALYZE_EXPENSES, period=CalendarMonth(12, 2025)
+    )
+
+
+def test_calendar_month_in_context_is_never_stale(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    last = context(
+        Intent.ANALYZE_EXPENSES, CalendarMonth(9, 2026), anchored_at=LAST_MONTH
+    )
+    follow_up = FollowUp(category=TransactionCategory.DINING)
+
+    resolved = router.resolve_follow_up(follow_up, last, NOW)
+
+    assert resolved == Interpretation(
+        intent=Intent.ANALYZE_EXPENSES,
+        category=TransactionCategory.DINING,
+        period=CalendarMonth(9, 2026),
     )

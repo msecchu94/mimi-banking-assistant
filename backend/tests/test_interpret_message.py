@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from mimi.application.errors import LLMInvalidResponseError, LLMUnavailableError
 from mimi.application.interpretation import (
+    CalendarMonth,
     FollowUp,
     Intent,
     Interpretation,
@@ -321,7 +322,89 @@ def test_follow_up_keeps_only_stated_contextual_values() -> None:
         category=TransactionCategory.DINING,
         transaction_type=TransactionType.DEBIT,
         period=PeriodReference.CURRENT_MONTH,
+        comparison_period=PeriodReference.PREVIOUS_MONTH,
     )
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ({"month": 10, "year": None}, CalendarMonth(10)),
+        ({"month": 10, "year": 2025}, CalendarMonth(10, 2025)),
+    ],
+)
+def test_calendar_month_is_kept_as_extracted(
+    output: dict[str, Any], expected: CalendarMonth
+) -> None:
+    result = interpret(model_output(intent="ANALYZE_EXPENSES", period=output))
+
+    assert result == Interpretation(intent=Intent.ANALYZE_EXPENSES, period=expected)
+
+
+def test_comparison_of_calendar_months_keeps_both_sides() -> None:
+    result = interpret(
+        model_output(
+            intent="COMPARE_EXPENSES",
+            period={"month": 10, "year": None},
+            comparison_period={"month": 9, "year": None},
+        )
+    )
+
+    assert result == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=CalendarMonth(10),
+        comparison_period=CalendarMonth(9),
+    )
+
+
+@pytest.mark.parametrize(
+    "month",
+    [
+        {"month": 0, "year": None},
+        {"month": 13, "year": 2025},
+        {"month": 10, "year": 1},
+        {"month": 10, "year": 10000},
+    ],
+)
+def test_out_of_range_calendar_month_is_invalid(month: dict[str, Any]) -> None:
+    result = interpret(
+        model_output(
+            intent="COMPARE_EXPENSES",
+            period=month,
+            comparison_period="PREVIOUS_MONTH",
+        )
+    )
+
+    assert result == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        comparison_period=PeriodReference.PREVIOUS_MONTH,
+        invalid_fields=frozenset({"period"}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("PREVIOUS_MONTH", PeriodReference.PREVIOUS_MONTH),
+        ({"month": 8, "year": None}, CalendarMonth(8)),
+    ],
+)
+def test_follow_up_keeps_comparison_period(
+    output: str | dict[str, Any], expected: PeriodReference | CalendarMonth
+) -> None:
+    result = interpret_follow_up(
+        model_output(intent="FOLLOW_UP", comparison_period=output)
+    )
+
+    assert result == FollowUp(comparison_period=expected)
+
+
+def test_follow_up_reports_unsupported_comparison_period() -> None:
+    result = interpret_follow_up(
+        model_output(intent="FOLLOW_UP", comparison_period="UNSUPPORTED")
+    )
+
+    assert result == FollowUp(unsupported_fields=frozenset({"comparison_period"}))
 
 
 def test_follow_up_keeps_relative_period() -> None:
@@ -367,7 +450,6 @@ def test_follow_up_drops_values_unrelated_to_context() -> None:
             intent="FOLLOW_UP",
             amount="UNSUPPORTED",
             currency="UNSUPPORTED",
-            comparison_period="UNSUPPORTED",
             beneficiary_reference="Laura",
             card_reference="x" * (MAX_REFERENCE_LENGTH + 1),
         )
@@ -455,6 +537,7 @@ def test_instructions_define_every_category_and_period_reference() -> None:
     [call] = llm.calls
     for value in [*TransactionCategory, *PeriodReference]:
         assert f"- {value.value}:" in call["instructions"]
+    assert "a named calendar month" in call["instructions"]
 
 
 @pytest.mark.parametrize("message", ["", "   ", "\n\t"])

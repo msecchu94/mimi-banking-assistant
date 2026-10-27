@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from mimi.application.interpretation import Intent, Interpretation, PeriodReference
+from mimi.application.interpretation import Intent, Interpretation, TemporalReference
 from mimi.domain.enums import TransactionCategory, TransactionType
 
 
@@ -15,8 +15,8 @@ class TemporalContext:
     symbolic period such as ``CURRENT_MONTH`` now resolves to other dates.
     """
 
-    period: PeriodReference
-    comparison_period: PeriodReference | None
+    period: TemporalReference
+    comparison_period: TemporalReference | None
     anchored_at: datetime
 
     def __post_init__(self) -> None:

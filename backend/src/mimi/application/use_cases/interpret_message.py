@@ -5,12 +5,14 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict
 
 from mimi.application.interpretation import (
+    CalendarMonth,
     CollectionInput,
     FollowUp,
     Intent,
     Interpretation,
     PeriodReference,
     RelativePeriod,
+    TemporalReference,
 )
 from mimi.application.llm import LLMProvider
 from mimi.application.pending_operations import PendingField
@@ -68,9 +70,11 @@ you?", "What can you do?", "Hola, ¿qué tal?", "Gracias, chau".
 - CANCEL: asks to cancel, stop or abandon something in progress. Examples: \
 "Cancel", "Never mind", "No, leave it", "Dejá, no importa", "Cancelalo".
 - FOLLOW_UP: only continues a previous question about transactions or \
-spending by stating a different period, category or transaction type, \
-without saying what is being asked. Examples: "And last month?", "¿Y el \
-anterior?", "¿Y la semana pasada?", "And on groceries?", "¿Y los ingresos?".
+spending by stating a different period, category or transaction type, or a \
+period to compare it with, without saying what is being asked. Examples: \
+"And last month?", "¿Y el anterior?", "¿Y la semana pasada?", "And on \
+groceries?", "¿Y los ingresos?", "¿Y comparado con el mes pasado?", "And vs \
+last week?".
 - UNKNOWN: anything that does not clearly match exactly one intent above.
 
 Use UNKNOWN, never another intent, when the message:
@@ -133,12 +137,18 @@ débito", is not a transaction type.
   - PREVIOUS_WEEK: "last week", "la semana pasada".
   - CURRENT_MONTH: "this month", "este mes", "en lo que va del mes".
   - PREVIOUS_MONTH: "last month", "el mes pasado".
+  - a named calendar month: an object with month, its number from 1 to 12, \
+and year, only if the user states it, otherwise null. Examples: "en \
+octubre" is {"month": 10, "year": null}; "October 2025" is {"month": 10, \
+"year": 2025}.
 - relative_period: only for FOLLOW_UP, PREVIOUS when the user asks for the \
 previous period without naming it, e.g. "¿Y el anterior?", "And the one \
 before?". Use null when a period is named, and set period instead.
 - comparison_period: for COMPARE_EXPENSES, the period it is compared \
 against, using the same values. If only one period is named, as in "Did I \
-spend more than last month?", set it here and leave period null.
+spend more than last month?", set it here and leave period null. For \
+FOLLOW_UP, the period the previous question is compared against, as in "¿Y \
+comparado con el mes pasado?".
 
 Use UNSUPPORTED for amount, currency, category, period or \
 comparison_period when the user states a value that cannot be expressed as \
@@ -149,8 +159,8 @@ described above, or several values for the same field. Examples:
 - other categories: "health", "viajes";
 - merchant or brand names, which are not categories: "Netflix", \
 "Starbucks", "Mercado Libre";
-- other periods: named months, years, date ranges or rolling periods, e.g. \
-"September", "este año", "del 1 al 15", "the last 30 days";
+- other periods: years without a month, date ranges or rolling periods, \
+e.g. "este año", "2025", "del 1 al 15", "the last 30 days";
 - several values: "super y restaurantes", "septiembre y octubre".
 
 Never produce identifiers, balances, totals or any other financial data. The \
@@ -170,6 +180,18 @@ class _FollowUp(StrEnum):
     FOLLOW_UP = "FOLLOW_UP"
 
 
+class _RawCalendarMonth(BaseModel):
+    """A named calendar month as requested from the model. Untrusted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    month: int
+    year: int | None
+
+
+_RawPeriod = PeriodReference | _Unsupported | _RawCalendarMonth
+
+
 class _RawInterpretation(BaseModel):
     """Schema requested from the model. Its content is untrusted."""
 
@@ -182,8 +204,8 @@ class _RawInterpretation(BaseModel):
     card_reference: str | None
     category: TransactionCategory | _Unsupported | None
     transaction_type: TransactionType | None
-    period: PeriodReference | _Unsupported | None
-    comparison_period: PeriodReference | _Unsupported | None
+    period: _RawPeriod | None
+    comparison_period: _RawPeriod | None
     relative_period: RelativePeriod | None
 
 
@@ -203,7 +225,7 @@ _ALLOWED_FIELDS: dict[Intent, frozenset[str]] = {
 }
 
 _FOLLOW_UP_FIELDS = frozenset(
-    {"category", "transaction_type", "period", "relative_period"}
+    {"category", "transaction_type", "period", "relative_period", "comparison_period"}
 )
 
 
@@ -440,6 +462,19 @@ def _validate(raw: _RawInterpretation) -> Interpretation | FollowUp:
             unsupported.add(name)
         return picked if isinstance(picked, kind) else None
 
+    def temporal(name: str, value: _RawPeriod | None) -> TemporalReference | None:
+        picked = value if name in allowed else None
+        if isinstance(picked, _Unsupported):
+            unsupported.add(name)
+            return None
+        if isinstance(picked, _RawCalendarMonth):
+            try:
+                return CalendarMonth(picked.month, picked.year)
+            except ValueError:
+                invalid.add(name)
+                return None
+        return picked
+
     amount = _validated_amount(pick("amount", raw.amount), invalid, unsupported)
 
     def reference(name: str, value: str | None) -> str | None:
@@ -449,8 +484,9 @@ def _validate(raw: _RawInterpretation) -> Interpretation | FollowUp:
         return _follow_up(
             category=supported("category", raw.category, TransactionCategory),
             transaction_type=pick("transaction_type", raw.transaction_type),
-            period=supported("period", raw.period, PeriodReference),
+            period=temporal("period", raw.period),
             relative_period=pick("relative_period", raw.relative_period),
+            comparison_period=temporal("comparison_period", raw.comparison_period),
             invalid=invalid,
             unsupported=unsupported,
         )
@@ -465,10 +501,8 @@ def _validate(raw: _RawInterpretation) -> Interpretation | FollowUp:
         card_reference=reference("card_reference", raw.card_reference),
         category=supported("category", raw.category, TransactionCategory),
         transaction_type=pick("transaction_type", raw.transaction_type),
-        period=supported("period", raw.period, PeriodReference),
-        comparison_period=supported(
-            "comparison_period", raw.comparison_period, PeriodReference
-        ),
+        period=temporal("period", raw.period),
+        comparison_period=temporal("comparison_period", raw.comparison_period),
         invalid_fields=frozenset(invalid),
         unsupported_fields=frozenset(unsupported),
     )
@@ -478,8 +512,9 @@ def _follow_up(
     *,
     category: TransactionCategory | None,
     transaction_type: TransactionType | None,
-    period: PeriodReference | None,
+    period: TemporalReference | None,
     relative_period: RelativePeriod | None,
+    comparison_period: TemporalReference | None,
     invalid: set[str],
     unsupported: set[str],
 ) -> FollowUp:
@@ -491,6 +526,7 @@ def _follow_up(
         category=category,
         transaction_type=transaction_type,
         period=period,
+        comparison_period=comparison_period,
         relative_period=relative_period,
         invalid_fields=frozenset(invalid),
         unsupported_fields=frozenset(unsupported),

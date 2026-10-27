@@ -21,6 +21,7 @@ from mimi.application.conversation_results import (
     BalancesResult,
     CollectingDataResult,
     ExpenseAnalysisResult,
+    ExpenseComparisonResult,
     FieldIssue,
     IncompleteQueryResult,
     NoPendingOperationResult,
@@ -44,7 +45,7 @@ from mimi.application.errors import (
     LLMUnavailableError,
 )
 from mimi.application.interactions import Cancel, Confirm, Interaction, SelectCard
-from mimi.application.interpretation import Intent, PeriodReference
+from mimi.application.interpretation import CalendarMonth, Intent, PeriodReference
 from mimi.application.pending_operations import (
     FreezeCardOperationData,
     PendingField,
@@ -671,6 +672,10 @@ def test_naive_clock_is_rejected(
 
 
 # NOW is Friday Oct 9th in Buenos Aires.
+OCTOBER = Period(
+    datetime(2026, 10, 1, tzinfo=BUENOS_AIRES),
+    datetime(2026, 11, 1, tzinfo=BUENOS_AIRES),
+)
 SEPTEMBER = Period(
     datetime(2026, 9, 1, tzinfo=BUENOS_AIRES),
     datetime(2026, 10, 1, tzinfo=BUENOS_AIRES),
@@ -770,6 +775,120 @@ def test_default_period_of_executed_query_is_kept_in_context(
         category=TransactionCategory.GROCERIES,
         temporal=TemporalContext(PeriodReference.CURRENT_MONTH, None, NOW),
     )
+
+
+@pytest.mark.parametrize(
+    ("content", "output", "category"),
+    [
+        (
+            "¿En qué gasté más este mes?",
+            model_output(intent="ANALYZE_EXPENSES", period="CURRENT_MONTH"),
+            None,
+        ),
+        (
+            "¿Cuánto gasté en el super este mes?",
+            model_output(
+                intent="ANALYZE_EXPENSES", period="CURRENT_MONTH", category="GROCERIES"
+            ),
+            TransactionCategory.GROCERIES,
+        ),
+    ],
+)
+def test_comparison_follow_up_turns_expense_analysis_into_comparison(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    content: str,
+    output: dict[str, Any],
+    category: TransactionCategory | None,
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    send(engine, llm, conversation_id, content, output)
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "¿Y comparado con el mes pasado?",
+        model_output(intent="FOLLOW_UP", comparison_period="PREVIOUS_MONTH"),
+    )
+
+    assert turn.intent is Intent.COMPARE_EXPENSES
+    assert isinstance(turn.result, ExpenseComparisonResult)
+    assert turn.result.comparison.current.period == OCTOBER
+    assert turn.result.comparison.previous.period == SEPTEMBER
+    assert turn.result.comparison.current.category is category
+    assert stored_context(scope, conversation_id) == ConversationContext(
+        last_intent=Intent.COMPARE_EXPENSES,
+        category=category,
+        temporal=TemporalContext(
+            PeriodReference.CURRENT_MONTH, PeriodReference.PREVIOUS_MONTH, NOW
+        ),
+    )
+
+
+def test_comparison_of_named_months_is_resolved_and_kept_in_context(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "Compará mis gastos de octubre con septiembre",
+        model_output(
+            intent="COMPARE_EXPENSES",
+            period={"month": 10, "year": None},
+            comparison_period={"month": 9, "year": None},
+        ),
+    )
+
+    assert turn.intent is Intent.COMPARE_EXPENSES
+    assert isinstance(turn.result, ExpenseComparisonResult)
+    assert turn.result.comparison.current.period == OCTOBER
+    assert turn.result.comparison.previous.period == SEPTEMBER
+    assert stored_context(scope, conversation_id) == ConversationContext(
+        last_intent=Intent.COMPARE_EXPENSES,
+        temporal=TemporalContext(CalendarMonth(10, 2026), CalendarMonth(9, 2026), NOW),
+    )
+
+
+def test_future_named_month_executes_no_query_and_keeps_context(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "¿Cuánto gasté en diciembre de 2026?",
+        model_output(intent="ANALYZE_EXPENSES", period={"month": 12, "year": 2026}),
+    )
+
+    assert turn.result == IncompleteQueryResult(
+        Intent.ANALYZE_EXPENSES, unsupported_fields=frozenset({"period"})
+    )
+    assert scope.repositories.transactions.queries == []
+    assert stored_context(scope, conversation_id) == EMPTY_CONTEXT
+
+
+def test_follow_up_stating_nothing_does_not_claim_missing_context(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    send(
+        engine,
+        llm,
+        conversation_id,
+        "¿En qué gasté más este mes?",
+        model_output(intent="ANALYZE_EXPENSES", period="CURRENT_MONTH"),
+    )
+
+    turn = send(engine, llm, conversation_id, "¿Y?", model_output(intent="FOLLOW_UP"))
+
+    assert turn.result == IncompleteQueryResult(Intent.ANALYZE_EXPENSES)
 
 
 def test_follow_up_without_context_executes_no_query(
