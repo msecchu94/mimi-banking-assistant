@@ -119,7 +119,10 @@ Valid:
 ```json
 {
   "conversation_id": "9e47b4c1-4a8c-4a3c-98d2-a31c9c87e641",
-  "interaction": "CONFIRM"
+  "interaction": "CONFIRM",
+  "payload": {
+    "operation_id": "5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d"
+  }
 }
 ```
 
@@ -129,7 +132,10 @@ Invalid:
 {
   "conversation_id": "9e47b4c1-4a8c-4a3c-98d2-a31c9c87e641",
   "message": "Yes.",
-  "interaction": "CONFIRM"
+  "interaction": "CONFIRM",
+  "payload": {
+    "operation_id": "5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d"
+  }
 }
 ```
 
@@ -184,7 +190,10 @@ For example, pressing a confirmation button sends:
 ```json
 {
   "conversation_id": "9e47b4c1-4a8c-4a3c-98d2-a31c9c87e641",
-  "interaction": "CONFIRM"
+  "interaction": "CONFIRM",
+  "payload": {
+    "operation_id": "5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d"
+  }
 }
 ```
 
@@ -211,15 +220,24 @@ structured data.
 Payload:
 
 ```text
-none
+operation_id: UUID
 ```
+
+`operation_id` is the one received in the `CONFIRMATION` UI being confirmed.
+`CONFIRM` authorizes only the operation currently waiting for confirmation
+under that `operation_id`. A correction gives the corrected operation a new
+`operation_id`, so a `CONFIRM` naming an earlier one is rejected with
+`INVALID_INTERACTION` and changes nothing.
 
 Example:
 
 ```json
 {
   "conversation_id": "9e47b4c1-4a8c-4a3c-98d2-a31c9c87e641",
-  "interaction": "CONFIRM"
+  "interaction": "CONFIRM",
+  "payload": {
+    "operation_id": "5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d"
+  }
 }
 ```
 
@@ -598,6 +616,7 @@ Example:
   "ui": {
     "type": "CONFIRMATION",
     "data": {
+      "operation_id": "5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d",
       "title": "Confirm transfer",
       "summary": {
         "amount": {
@@ -625,7 +644,8 @@ Flutter renders the available actions.
 
 The actions do not authorize execution locally.
 
-Selecting `CONFIRM` produces a new structured request to the backend.
+Selecting `CONFIRM` produces a new structured request to the backend carrying
+this `operation_id`.
 
 ---
 

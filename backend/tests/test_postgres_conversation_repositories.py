@@ -518,6 +518,7 @@ PENDING_STATES: dict[str, PendingCase] = {
         PendingOperation(
             PendingOperationType.TRANSFER,
             TransferOperationData(refs.account_id, refs.beneficiary_id, AMOUNT),
+            uuid4(),
         ),
     ),
     "freeze_missing_card": lambda refs: (
@@ -527,7 +528,9 @@ PENDING_STATES: dict[str, PendingCase] = {
     "freeze_complete": lambda refs: (
         WAITING_CONFIRMATION,
         PendingOperation(
-            PendingOperationType.FREEZE_CARD, FreezeCardOperationData(refs.card_id)
+            PendingOperationType.FREEZE_CARD,
+            FreezeCardOperationData(refs.card_id),
+            uuid4(),
         ),
     ),
     "unfreeze_complete": lambda refs: (
@@ -535,6 +538,7 @@ PENDING_STATES: dict[str, PendingCase] = {
         PendingOperation(
             PendingOperationType.UNFREEZE_CARD,
             UnfreezeCardOperationData(refs.card_id),
+            uuid4(),
         ),
     ),
 }
@@ -596,6 +600,7 @@ def test_replacing_pending_operation_clears_unused_columns(
         assert model.pending_amount is None
         assert model.pending_currency is None
         assert model.pending_card_id == pending_refs.card_id
+        assert model.pending_operation_id == freeze.operation_id
 
 
 def test_clearing_pending_operation_returns_to_ready(
@@ -618,6 +623,7 @@ def test_clearing_pending_operation_returns_to_ready(
     with session_factory() as session:
         model = session.get_one(ConversationModel, record.conversation.id)
         assert model.pending_operation_type is None
+        assert model.pending_operation_id is None
         assert model.pending_source_account_id is None
         assert model.pending_beneficiary_id is None
         assert model.pending_amount is None

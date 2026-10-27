@@ -232,6 +232,11 @@ class ConversationModel(Base):
             name="waiting_confirmation_is_complete",
         ),
         CheckConstraint(
+            "(pending_operation_id IS NOT NULL) = "
+            f"(flow_state = '{_WAITING_CONFIRMATION}')",
+            name="waiting_confirmation_has_operation_id",
+        ),
+        CheckConstraint(
             f"status <> '{_CLOSED}' OR pending_operation_type IS NULL",
             name="closed_has_no_pending_operation",
         ),
@@ -291,6 +296,7 @@ class ConversationModel(Base):
     pending_operation_type: Mapped[PendingOperationType | None] = mapped_column(
         enum_type(PendingOperationType, "pending_operation_type")
     )
+    pending_operation_id: Mapped[UUID | None]
     pending_source_account_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("accounts.id")
     )

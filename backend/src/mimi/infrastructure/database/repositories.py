@@ -184,6 +184,7 @@ def _pending_operation_columns(
     cleared."""
     columns: dict[str, Any] = {
         "pending_operation_type": None,
+        "pending_operation_id": None,
         "pending_source_account_id": None,
         "pending_beneficiary_id": None,
         "pending_amount": None,
@@ -194,6 +195,7 @@ def _pending_operation_columns(
     if pending_operation is None:
         return columns
     columns["pending_operation_type"] = pending_operation.type
+    columns["pending_operation_id"] = pending_operation.operation_id
     columns["pending_missing_fields"] = [
         field.value for field in pending_operation.missing_fields
     ]
@@ -240,7 +242,9 @@ def _pending_operation_from_model(model: ConversationModel) -> PendingOperation 
             data = FreezeCardOperationData(card_id=model.pending_card_id)
         case PendingOperationType.UNFREEZE_CARD:
             data = UnfreezeCardOperationData(card_id=model.pending_card_id)
-    pending_operation = PendingOperation(operation_type, data)
+    pending_operation = PendingOperation(
+        operation_type, data, model.pending_operation_id
+    )
     stored = [PendingField(field) for field in model.pending_missing_fields or ()]
     if len(stored) != len(set(stored)) or set(stored) != set(
         pending_operation.missing_fields

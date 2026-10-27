@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -36,6 +37,7 @@ COMPLETE_TRANSFER = PendingOperation(
 PARTIAL_TRANSFER = PendingOperation(
     TRANSFER, TransferOperationData(beneficiary_id=uuid4())
 )
+WAITING_TRANSFER = replace(COMPLETE_TRANSFER, operation_id=uuid4())
 
 
 @pytest.mark.parametrize(
@@ -144,7 +146,7 @@ def test_valid_transfer_amount_is_accepted(amount: str) -> None:
     [
         (READY, None),
         (COLLECTING_DATA, PARTIAL_TRANSFER),
-        (WAITING_CONFIRMATION, COMPLETE_TRANSFER),
+        (WAITING_CONFIRMATION, WAITING_TRANSFER),
     ],
 )
 def test_consistent_pending_states_are_accepted(
@@ -162,8 +164,11 @@ def test_consistent_pending_states_are_accepted(
         # A complete operation is never collecting data; whether it may wait
         # for confirmation depends on the caller's pre-validation.
         (COLLECTING_DATA, COMPLETE_TRANSFER),
+        # Only a confirmation request has an operation id, and it always has.
+        (COLLECTING_DATA, replace(PARTIAL_TRANSFER, operation_id=uuid4())),
+        (WAITING_CONFIRMATION, COMPLETE_TRANSFER),
         (WAITING_CONFIRMATION, None),
-        (WAITING_CONFIRMATION, PARTIAL_TRANSFER),
+        (WAITING_CONFIRMATION, replace(PARTIAL_TRANSFER, operation_id=uuid4())),
         # An unresolved amount is a candidate, never confirmable data.
         (
             WAITING_CONFIRMATION,
@@ -172,6 +177,7 @@ def test_consistent_pending_states_are_accepted(
                 TransferOperationData(
                     uuid4(), uuid4(), unresolved_amount=Decimal("25000")
                 ),
+                uuid4(),
             ),
         ),
     ],
@@ -208,4 +214,4 @@ def test_closed_record_has_no_pending_operation() -> None:
     assert make_record(ConversationStatus.CLOSED, READY, None).pending_operation is None
 
     with pytest.raises(ValueError, match="closed"):
-        make_record(ConversationStatus.CLOSED, WAITING_CONFIRMATION, COMPLETE_TRANSFER)
+        make_record(ConversationStatus.CLOSED, WAITING_CONFIRMATION, WAITING_TRANSFER)

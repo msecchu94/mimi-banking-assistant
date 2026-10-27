@@ -231,8 +231,14 @@ Conceptually:
 PendingOperation
 ├── type
 ├── data
-└── missing_fields
+├── missing_fields
+└── operation_id: UUID?
 ```
+
+`operation_id` exists only while the operation is `WAITING_CONFIRMATION`. It
+identifies that confirmation request: every operation that passes
+pre-validation receives a new `operation_id`, including a corrected one, and
+`CONFIRM` must name it.
 
 The exact persistence structure is intentionally not defined here.
 
@@ -656,10 +662,13 @@ For example:
 WAITING_CONFIRMATION
         │
         ▼
-      CONFIRM
+CONFIRM(operation_id)
         │
         ▼
 read PendingOperation
+        │
+        ▼
+check operation_id
         │
         ▼
 revalidate
@@ -735,6 +744,11 @@ Any material modification to a pending operation invalidates the previous
 confirmation request.
 
 A new explicit confirmation is always required after modification.
+
+The corrected operation receives a new `operation_id`. A `CONFIRM` naming the
+previous `operation_id` is rejected and neither executes nor changes the
+corrected operation. A reply that states no new parameter value is not a
+correction and keeps the current confirmation request.
 
 The same rule applies to changes such as:
 
@@ -1138,7 +1152,9 @@ The following invariants apply to V1:
    operation.
 7. A second state-changing operation cannot start while another is pending.
 8. Ambiguity never authorizes a state-changing operation.
-9. Material parameter changes require a new explicit confirmation.
+9. Material parameter changes require a new explicit confirmation under a
+   new `operation_id`; `CONFIRM` executes only the operation waiting under the
+   `operation_id` it names.
 10. Explicit confirmation is required before every state-changing execution.
 11. Confirmation always triggers revalidation against current financial state.
 12. Cancellation before execution produces no financial state change.

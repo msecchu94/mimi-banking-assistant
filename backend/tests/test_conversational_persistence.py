@@ -70,6 +70,7 @@ def conversation(refs: FinancialRefs, **overrides: Any) -> ConversationModel:
         "flow_state": READY,
         "context": {},
         "pending_operation_type": None,
+        "pending_operation_id": None,
         "pending_source_account_id": None,
         "pending_beneficiary_id": None,
         "pending_amount": None,
@@ -143,6 +144,7 @@ VALID_STATES: dict[str, Overrides] = {
     },
     "waiting_transfer_confirmation": lambda refs: {
         "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
         "pending_operation_type": TRANSFER,
         "pending_source_account_id": refs.account_id,
         "pending_beneficiary_id": refs.beneficiary_id,
@@ -152,6 +154,7 @@ VALID_STATES: dict[str, Overrides] = {
     },
     "waiting_freeze_confirmation": lambda refs: {
         "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
         "pending_operation_type": FREEZE_CARD,
         "pending_card_id": refs.card_id,
         "pending_missing_fields": [],
@@ -252,22 +255,39 @@ INVALID_STATES: dict[str, Overrides] = {
         "pending_missing_fields": [],
     },
     "waiting_without_pending_operation": lambda refs: {
-        "flow_state": WAITING_CONFIRMATION
+        "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
     },
+    "waiting_without_operation_id": lambda refs: {
+        "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_type": FREEZE_CARD,
+        "pending_card_id": refs.card_id,
+        "pending_missing_fields": [],
+    },
+    "collecting_with_operation_id": lambda refs: {
+        "flow_state": COLLECTING_DATA,
+        "pending_operation_type": UNFREEZE_CARD,
+        "pending_operation_id": uuid4(),
+        "pending_missing_fields": ["card_id"],
+    },
+    "ready_with_operation_id": lambda refs: {"pending_operation_id": uuid4()},
     "waiting_with_missing_fields": lambda refs: {
         "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
         "pending_operation_type": FREEZE_CARD,
         "pending_card_id": refs.card_id,
         "pending_missing_fields": ["card_id"],
     },
     "waiting_with_incomplete_transfer": lambda refs: {
         "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
         "pending_operation_type": TRANSFER,
         "pending_beneficiary_id": refs.beneficiary_id,
         "pending_missing_fields": [],
     },
     "waiting_card_operation_without_card": lambda refs: {
         "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
         "pending_operation_type": UNFREEZE_CARD,
         "pending_missing_fields": [],
     },
@@ -279,6 +299,7 @@ INVALID_STATES: dict[str, Overrides] = {
     },
     "pending_type_without_missing_fields": lambda refs: {
         "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
         "pending_operation_type": FREEZE_CARD,
         "pending_card_id": refs.card_id,
     },
@@ -305,6 +326,7 @@ INVALID_STATES: dict[str, Overrides] = {
     },
     "unresolved_amount_awaiting_confirmation": lambda refs: {
         "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
         "pending_operation_type": TRANSFER,
         "pending_source_account_id": refs.account_id,
         "pending_beneficiary_id": refs.beneficiary_id,
@@ -367,6 +389,7 @@ INVALID_STATES: dict[str, Overrides] = {
     },
     "dangling_card": lambda refs: {
         "flow_state": WAITING_CONFIRMATION,
+        "pending_operation_id": uuid4(),
         "pending_operation_type": FREEZE_CARD,
         "pending_card_id": uuid4(),
         "pending_missing_fields": [],
@@ -386,6 +409,13 @@ REJECTING_CONSTRAINT = {
     "waiting_without_pending_operation": (
         "ck_conversations_waiting_confirmation_is_complete"
     ),
+    "waiting_without_operation_id": (
+        "ck_conversations_waiting_confirmation_has_operation_id"
+    ),
+    "collecting_with_operation_id": (
+        "ck_conversations_waiting_confirmation_has_operation_id"
+    ),
+    "ready_with_operation_id": "ck_conversations_waiting_confirmation_has_operation_id",
     "waiting_with_missing_fields": "ck_conversations_waiting_confirmation_is_complete",
     "waiting_with_incomplete_transfer": (
         "ck_conversations_waiting_confirmation_is_complete"
