@@ -196,6 +196,26 @@ ConversationContext
 This structure is conceptual. Its exact persistence representation is an
 implementation decision.
 
+A follow-up states only what changes; everything else is inherited from the
+last executed read-only query. A follow-up that states a period to compare
+against continues an expense analysis or comparison as `COMPARE_EXPENSES`,
+keeping its category and its period:
+
+```text
+User:
+"What did I spend on groceries this month?"
+
+User:
+"And compared with last month?"
+
+        ↓
+
+COMPARE_EXPENSES · GROCERIES · CURRENT_MONTH vs PREVIOUS_MONTH
+```
+
+A follow-up is never resolved against context that does not exist, and an
+inherited period must still resolve to the same dates as when its query ran.
+
 Conversational context must contain only information useful for continuing the
 active conversation.
 
@@ -437,16 +457,24 @@ useful.
 
 ### Period Defaults
 
-Symbolic periods are resolved to calendar periods in the configured
-application timezone.
+Symbolic periods and calendar months are resolved to calendar periods in the
+configured application timezone.
+
+A calendar month without a year is its latest occurrence that does not start
+after the current month: in October 2026, "October" is October 2026 and
+"November" is November 2025. The year is fixed before the query executes and
+is kept in context. A calendar month starting after the current month is
+rejected.
 
 When the user omits a period:
 
 - `ANALYZE_EXPENSES` uses `CURRENT_MONTH`.
 - `COMPARE_EXPENSES` derives the omitted side only from these pairs:
   `TODAY ↔ YESTERDAY`, `CURRENT_WEEK ↔ PREVIOUS_WEEK`,
-  `CURRENT_MONTH ↔ PREVIOUS_MONTH`. If both periods are omitted, or the stated
-  period has no pair, the comparison is not executed.
+  `CURRENT_MONTH ↔ PREVIOUS_MONTH`, a calendar month ↔ the month before it,
+  and a calendar month compared against ↔ `CURRENT_MONTH`. If both periods
+  are omitted, or the stated period has no pair, the comparison is not
+  executed.
 - `GET_TRANSACTIONS` applies no temporal filter and no implicit limit.
 
 Defaults apply only to omitted periods, never to unsupported ones.
