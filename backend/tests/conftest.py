@@ -1,6 +1,7 @@
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from alembic import command
@@ -31,11 +32,15 @@ def require_test_database_url() -> str:
     return url
 
 
+DEMO_CUSTOMER_ID = UUID("5d9a1e2c-7b4f-4c3e-8a6d-1f2e3b4c5d6e")
+
+
 def make_test_settings(database_url: str) -> Settings:
     return Settings(
         _env_file=None,
         environment=AppEnvironment.TEST,
         database_url=SecretStr(database_url),
+        demo_customer_id=DEMO_CUSTOMER_ID,
     )
 
 

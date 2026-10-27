@@ -207,6 +207,8 @@ class TransactionItem(_ChatModel):
 
 
 class ExpensePeriod(_ChatModel):
+    """A period of whole local days; ``to`` is its last day, inclusive."""
+
     model_config = ConfigDict(
         validate_by_name=True, validate_by_alias=True, serialize_by_alias=True
     )
@@ -215,13 +217,39 @@ class ExpensePeriod(_ChatModel):
     to: date
 
 
-class ComparedPeriod(ExpensePeriod):
-    total: Money
-
-
 class CategoryExpense(_ChatModel):
     category: TransactionCategory
     amount: Money
+
+
+class CurrencyExpenses(_ChatModel):
+    """Expenses in one currency; currencies are never combined or converted."""
+
+    total: Money
+    categories: list[CategoryExpense]
+
+
+class ExpenseChange(StrEnum):
+    INCREASE = "INCREASE"
+    DECREASE = "DECREASE"
+    UNCHANGED = "UNCHANGED"
+
+
+def _non_negative(money: Money) -> Money:
+    if money.amount < 0:
+        raise ValueError("difference must be a non-negative magnitude")
+    return money
+
+
+class CurrencyComparison(_ChatModel):
+    """The totals of one currency in both periods. ``difference`` is the
+    non-negative magnitude of current minus previous; ``change`` carries its
+    direction."""
+
+    current_total: Money
+    previous_total: Money
+    difference: Annotated[Money, AfterValidator(_non_negative)]
+    change: ExpenseChange
 
 
 class ConfirmationAction(_ChatModel):
@@ -270,15 +298,16 @@ class ConfirmationUiData(_ChatModel):
 
 
 class ExpenseSummaryUiData(_ChatModel):
+    """One entry per currency with expenses; none when there were none."""
+
     period: ExpensePeriod
-    total: Money
-    categories: list[CategoryExpense]
+    currencies: list[CurrencyExpenses]
 
 
 class ExpenseComparisonUiData(_ChatModel):
-    current_period: ComparedPeriod
-    previous_period: ComparedPeriod
-    difference: Money
+    current_period: ExpensePeriod
+    previous_period: ExpensePeriod
+    currencies: list[CurrencyComparison]
 
 
 class TransactionListUiData(_ChatModel):
@@ -364,4 +393,12 @@ class ChatResponse(_ChatModel):
     intent: IntentType
     conversation_state: ConversationFlowState
     ui: UiResponse
+    metadata: ResponseMetadata
+
+
+class ConversationResponse(_ChatModel):
+    """A conversation started for the demo customer."""
+
+    conversation_id: UUID
+    conversation_state: ConversationFlowState
     metadata: ResponseMetadata

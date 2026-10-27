@@ -1,6 +1,7 @@
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from pydantic import (
@@ -52,6 +53,10 @@ class Settings(BaseSettings):
 
     # IANA timezone in which symbolic periods such as "this month" are resolved.
     timezone: ZoneInfo = ZoneInfo("America/Argentina/Buenos_Aires")
+
+    # The single V1 demo customer served by the Chat API. Optional here and
+    # required only when the API is built, like the LLM settings.
+    demo_customer_id: UUID | None = None
 
     @field_validator("database_url")
     @classmethod
