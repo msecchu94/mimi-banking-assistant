@@ -158,15 +158,20 @@ class ConversationEngine:
     ) -> Turn:
         """Interpret a user message in an owned ACTIVE conversation, answer
         read-only queries, including follow-ups of the previous query, and
-        collect the data of a state-changing operation.
+        collect or correct the data of a state-changing operation.
 
-        While the conversation is COLLECTING_DATA, the message is first
-        interpreted as data for the pending operation; any other message is
-        interpreted on its own. A state-changing request starts collecting from
-        READY; while an operation is pending, another one is a conflict and the
-        pending operation is unchanged. Collected data that completes the
-        operation is pre-validated: a valid operation waits for confirmation and
-        an invalid one is discarded, returning to READY. Nothing is executed.
+        While an operation is pending, the message is first interpreted as data
+        for it, including corrections while it waits for confirmation; any
+        other message is interpreted on its own, and so is a reply stating no
+        data for an operation waiting for confirmation. A state-changing
+        request starts collecting from READY, and a request of the pending
+        operation's type is merged into it; a request of another type is a
+        conflict and the pending operation is unchanged. Collected data that
+        completes the operation is pre-validated: a valid operation waits for
+        confirmation under a new ``operation_id``, which invalidates any earlier
+        confirmation request, and an invalid one is discarded, returning to
+        READY. Corrected data that leaves the operation incomplete returns it
+        to COLLECTING_DATA. Nothing is executed.
 
         The user message is persisted only together with the turn's result, so
         a failed interpretation leaves no trace. A follow-up is resolved against
@@ -175,8 +180,8 @@ class ConversationEngine:
 
         Raises ``ConversationNotFoundError`` when the conversation does not
         exist or is not owned by the customer, ``ConversationClosedError`` when
-        it is CLOSED, ``InvalidConversationStateError`` when the operation being
-        collected changed while the message was interpreted, and
+        it is CLOSED, ``InvalidConversationStateError`` when the pending
+        operation changed while the message was interpreted, and
         ``LLMUnavailableError`` or ``LLMInvalidResponseError`` when the message
         cannot be interpreted.
         """
@@ -185,15 +190,15 @@ class ConversationEngine:
         self._now()  # A misconfigured clock fails before the LLM is called.
 
         with self._transaction_scope.begin() as repositories:
-            collecting = _collecting(
-                _require_active(repositories, customer_id, conversation_id)
-            )
+            pending = _require_active(
+                repositories, customer_id, conversation_id
+            ).pending_operation
 
-        interpretation = self._interpret(content, collecting)
+        interpretation = self._interpret(content, pending)
 
         with self._transaction_scope.begin() as repositories:
             record = _require_active(repositories, customer_id, conversation_id)
-            if _collecting(record) != collecting:
+            if record.pending_operation != pending:
                 raise InvalidConversationStateError()
             now = self._now()
             message = Message(
@@ -207,15 +212,15 @@ class ConversationEngine:
             repositories.conversations.touch(conversation_id, now)
             flow_state = record.flow_state
             if isinstance(interpretation, CollectionInput):
-                if collecting is None:
+                if pending is None:
                     raise AssertionError("collection input without an operation")
-                intent = _OPERATION_INTENTS[collecting.type]
+                intent = _OPERATION_INTENTS[pending.type]
                 result, flow_state = self._collect(
                     repositories,
                     customer_id,
                     conversation_id,
-                    collecting.type,
-                    collecting.data,
+                    pending.type,
+                    pending.data,
                     interpretation,
                 )
             elif (
@@ -263,6 +268,8 @@ class ConversationEngine:
         ``CONFIRM`` executes the operation waiting for confirmation, exactly as
         persisted, with its Use Case, which revalidates it against current
         state first; a revalidation failure discards it without executing it.
+        It applies only to the confirmation request it names: another
+        ``operation_id`` is an ``InvalidInteractionError``.
         ``CANCEL`` discards the pending operation without executing it. Either
         way the conversation returns to READY. Without a pending operation,
         both have no effect. ``SELECT_CARD`` sets the card of the card
@@ -274,7 +281,8 @@ class ConversationEngine:
 
         Raises ``ConversationNotFoundError``, ``ConversationClosedError``, and
         ``InvalidInteractionError`` when the interaction does not apply to the
-        current flow state, leaving the conversation unchanged.
+        current flow state or pending operation, leaving the conversation
+        unchanged.
         """
         with self._transaction_scope.begin() as repositories:
             record = _require_active(repositories, customer_id, conversation_id)
@@ -307,6 +315,8 @@ class ConversationEngine:
                     conversation_id, flow_state, None
                 )
             elif record.flow_state is ConversationFlowState.WAITING_CONFIRMATION:
+                if interaction.operation_id != pending.operation_id:
+                    raise InvalidInteractionError()
                 intent = _OPERATION_INTENTS[pending.type]
                 result = _execute(repositories, customer_id, pending, now)
                 repositories.conversations.save_pending_operation(
@@ -324,13 +334,17 @@ class ConversationEngine:
         )
 
     def _interpret(
-        self, content: str, collecting: PendingOperation | None
+        self, content: str, pending: PendingOperation | None
     ) -> Interpretation | FollowUp | CollectionInput:
-        if collecting is not None:
+        if pending is not None:
             collected = self._collection_interpreter.execute(
-                content, collecting.type, collecting.missing_fields
+                content, pending.type, pending.missing_fields
             )
-            if collected is not None:
+            # A reply stating no data does not correct an operation waiting
+            # for confirmation, so its confirmation request stays valid.
+            if collected is not None and not (
+                pending.operation_id is not None and collected == CollectionInput()
+            ):
                 return collected
         return self._interpreter.execute(content)
 
@@ -341,14 +355,12 @@ class ConversationEngine:
         record: ConversationRecord,
         interpretation: Interpretation,
     ) -> tuple[TurnResult, ConversationFlowState]:
-        """Start collecting a requested operation, or continue the pending one
-        when the request restates it while collecting its data."""
+        """Start collecting a requested operation, or merge the request into
+        the pending operation of the same type, collected or waiting for
+        confirmation."""
         operation_type = _OPERATION_TYPES[interpretation.intent]
         pending = record.pending_operation
-        if pending is not None and not (
-            record.flow_state is ConversationFlowState.COLLECTING_DATA
-            and pending.type is operation_type
-        ):
+        if pending is not None and pending.type is not operation_type:
             conflict = PendingOperationConflictResult(
                 interpretation.intent, pending.type
             )
@@ -387,8 +399,9 @@ class ConversationEngine:
         collection: CollectingDataResult,
     ) -> tuple[TurnResult, ConversationFlowState]:
         """Save the collected operation: still collecting while data is
-        missing, otherwise waiting for confirmation once pre-validated, or
-        discarded when pre-validation fails."""
+        missing, otherwise waiting for confirmation under a new
+        ``operation_id`` once pre-validated, or discarded when pre-validation
+        fails."""
         operation: PendingOperation | None = collection.operation
         result: TurnResult = collection
         if collection.operation.missing_fields:
@@ -397,6 +410,8 @@ class ConversationEngine:
             result = pre_validate(repositories, customer_id, collection.operation)
             if isinstance(result, AwaitingConfirmationResult):
                 flow_state = ConversationFlowState.WAITING_CONFIRMATION
+                operation = replace(collection.operation, operation_id=uuid4())
+                result = replace(result, operation=operation)
             else:
                 flow_state = ConversationFlowState.READY
                 operation = None

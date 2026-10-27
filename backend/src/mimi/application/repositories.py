@@ -130,7 +130,8 @@ class ConversationRepository(Protocol):
 
         ``READY`` with ``None`` clears the operation. ``WAITING_CONFIRMATION``
         may be saved only after the caller pre-validated the complete
-        operation. Raises ``ValueError`` when the state is inconsistent.
+        operation, with the ``operation_id`` of its confirmation request.
+        Raises ``ValueError`` when the state is inconsistent.
         """
         ...
 

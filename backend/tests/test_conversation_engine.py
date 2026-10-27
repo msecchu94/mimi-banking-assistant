@@ -104,6 +104,7 @@ PENDING_TRANSFER = PendingOperation(
         beneficiary_id=uuid4(),
         amount=Money(Decimal("25000.00"), Currency.ARS),
     ),
+    operation_id=uuid4(),
 )
 
 EMPTY_OUTPUT: dict[str, Any] = {
@@ -494,9 +495,10 @@ def test_handle_message_does_not_change_flow_state(
     assert stored.flow_state is ConversationFlowState.READY
 
 
-def test_handle_message_reports_flow_state_read_under_turn_lock(
+def test_operation_started_during_interpretation_persists_nothing(
     engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
 ) -> None:
+    # The message was interpreted without the operation that is now pending.
     record = store_conversation(scope)
     conversation_id = record.conversation.id
     llm.on_call = lambda: replace_stored(
@@ -506,12 +508,13 @@ def test_handle_message_reports_flow_state_read_under_turn_lock(
         pending_operation=PENDING_TRANSFER,
     )
 
-    turn = engine.handle_message(CUSTOMER_ID, conversation_id, "What's my balance?")
+    with pytest.raises(InvalidConversationStateError):
+        engine.handle_message(CUSTOMER_ID, conversation_id, "What's my balance?")
 
-    assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
-    assert turn.result == BalancesResult((SAVINGS,))
     stored = scope.repositories.conversations.records[conversation_id]
     assert stored.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert stored.pending_operation == PENDING_TRANSFER
+    assert scope.repositories.messages.messages == []
 
 
 @pytest.mark.parametrize("intent", ["GENERAL_CONVERSATION", "CANCEL", "UNKNOWN"])
@@ -998,6 +1001,15 @@ def stored_state(
     return record.flow_state, record.pending_operation
 
 
+def awaiting(turn: Turn, operation: PendingOperation) -> PendingOperation:
+    """``operation`` under the new operation id of the turn's confirmation
+    request."""
+    assert isinstance(turn.result, AwaitingConfirmationResult)
+    operation_id = turn.result.operation.operation_id
+    assert operation_id is not None
+    return replace(operation, operation_id=operation_id)
+
+
 def test_incomplete_request_starts_collecting_resolved_data(
     engine: ConversationEngine,
     scope: FakeTransactionScope,
@@ -1037,10 +1049,13 @@ def test_contextual_answer_completes_and_pre_validates_transfer(
         engine, llm, conversation_id, "25000", collection_output(amount="25000")
     )
 
-    complete = PendingOperation(
-        PendingOperationType.TRANSFER,
-        TransferOperationData(
-            SAVINGS.id, LAURA.id, Money(Decimal("25000"), Currency.ARS)
+    complete = awaiting(
+        turn,
+        PendingOperation(
+            PendingOperationType.TRANSFER,
+            TransferOperationData(
+                SAVINGS.id, LAURA.id, Money(Decimal("25000"), Currency.ARS)
+            ),
         ),
     )
     assert turn.intent is Intent.TRANSFER_MONEY
@@ -1225,8 +1240,11 @@ def test_card_operation_collects_an_ambiguous_card_and_pre_validates(
         collection_output(card_reference="la de débito"),
     )
 
-    complete = PendingOperation(
-        PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_DEBIT.id)
+    complete = awaiting(
+        second,
+        PendingOperation(
+            PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_DEBIT.id)
+        ),
     )
     assert second.intent is Intent.FREEZE_CARD
     assert second.result == AwaitingConfirmationResult(complete, card=VISA_DEBIT)
@@ -1252,8 +1270,12 @@ def test_request_resolving_one_card_awaits_confirmation(
         model_output(intent="UNFREEZE_CARD", card_reference="la que termina en 9134"),
     )
 
-    complete = PendingOperation(
-        PendingOperationType.UNFREEZE_CARD, UnfreezeCardOperationData(VISA_CREDIT.id)
+    complete = awaiting(
+        turn,
+        PendingOperation(
+            PendingOperationType.UNFREEZE_CARD,
+            UnfreezeCardOperationData(VISA_CREDIT.id),
+        ),
     )
     assert turn.intent is Intent.UNFREEZE_CARD
     assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
@@ -1362,19 +1384,15 @@ def test_restated_operation_is_merged_while_collecting(
         (ConversationFlowState.WAITING_CONFIRMATION, PENDING_TRANSFER, "FREEZE_CARD"),
         (
             ConversationFlowState.WAITING_CONFIRMATION,
-            PENDING_TRANSFER,
-            "TRANSFER_MONEY",
-        ),
-        (
-            ConversationFlowState.WAITING_CONFIRMATION,
             PendingOperation(
                 PendingOperationType.UNFREEZE_CARD,
                 UnfreezeCardOperationData(VISA_CREDIT.id),
+                uuid4(),
             ),
             "FREEZE_CARD",
         ),
     ],
-    ids=["collecting", "waiting", "waiting_same_type", "waiting_card"],
+    ids=["collecting", "waiting", "waiting_card"],
 )
 def test_second_operation_conflicts_with_the_pending_one(
     engine: ConversationEngine,
@@ -1422,29 +1440,20 @@ def test_other_messages_leave_the_collected_operation_unchanged(
     )
 
 
-def test_collection_interpretation_is_used_only_while_collecting(
+def test_collection_interpretation_is_used_only_with_a_pending_operation(
     engine: ConversationEngine,
     scope: FakeTransactionScope,
     llm: FakeLLMProvider,
     banking: FakeRepositories,
 ) -> None:
     conversation_id = store_conversation(scope).conversation.id
-    replace_stored(
-        scope,
-        conversation_id,
-        flow_state=ConversationFlowState.WAITING_CONFIRMATION,
-        pending_operation=PENDING_TRANSFER,
-    )
     llm.collection_output = collection_output(amount="25000")
 
     turn = send(engine, llm, conversation_id, "25000", model_output(intent="UNKNOWN"))
 
     assert turn.result == UnhandledIntentResult(Intent.UNKNOWN)
     assert llm.collection_calls == []
-    assert stored_state(scope, conversation_id) == (
-        ConversationFlowState.WAITING_CONFIRMATION,
-        PENDING_TRANSFER,
-    )
+    assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
 
 
 def test_operation_changed_during_interpretation_persists_nothing(
@@ -1478,12 +1487,15 @@ LAURA_25000 = PendingOperation(
     TransferOperationData(
         SAVINGS.id, LAURA.id, Money(Decimal("25000.00"), Currency.ARS)
     ),
+    uuid4(),
 )
 FREEZE_VISA_DEBIT = PendingOperation(
-    PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_DEBIT.id)
+    PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_DEBIT.id), uuid4()
 )
 UNFREEZE_VISA_CREDIT = PendingOperation(
-    PendingOperationType.UNFREEZE_CARD, UnfreezeCardOperationData(VISA_CREDIT.id)
+    PendingOperationType.UNFREEZE_CARD,
+    UnfreezeCardOperationData(VISA_CREDIT.id),
+    uuid4(),
 )
 COLLECTING_FREEZE = PendingOperation(
     PendingOperationType.FREEZE_CARD, FreezeCardOperationData()
@@ -1529,6 +1541,12 @@ def interact(
     return turn
 
 
+def confirm(operation: PendingOperation) -> Confirm:
+    """The confirmation of ``operation``'s confirmation request."""
+    assert operation.operation_id is not None
+    return Confirm(operation.operation_id)
+
+
 def balance(scope: FakeTransactionScope) -> Money:
     [account] = [a for a in scope.repositories.accounts.accounts if a.id == SAVINGS.id]
     return account.balance
@@ -1550,7 +1568,7 @@ def test_confirm_executes_the_persisted_transfer(
     context = stored_context(scope, conversation_id)
     messages = list(scope.repositories.messages.messages)
 
-    turn = interact(engine, llm, conversation_id, Confirm())
+    turn = interact(engine, llm, conversation_id, confirm(LAURA_25000))
 
     [(transfer, transaction)] = executable.transfers.transfers
     assert turn == Turn(
@@ -1593,7 +1611,7 @@ def test_confirm_executes_the_persisted_card_operation(
 ) -> None:
     conversation_id = waiting(scope, operation)
 
-    turn = interact(engine, llm, conversation_id, Confirm())
+    turn = interact(engine, llm, conversation_id, confirm(operation))
 
     assert turn.intent is intent
     assert turn.flow_state is ConversationFlowState.READY
@@ -1615,7 +1633,7 @@ def test_confirm_discards_a_transfer_that_fails_revalidation(
     low = Money(Decimal("100.00"), Currency.ARS)
     executable.accounts.accounts = [replace(SAVINGS, balance=low)]
 
-    turn = interact(engine, llm, conversation_id, Confirm())
+    turn = interact(engine, llm, conversation_id, confirm(LAURA_25000))
 
     assert turn.flow_state is ConversationFlowState.READY
     assert isinstance(turn.result, OperationFailedResult)
@@ -1633,6 +1651,7 @@ def test_confirm_discards_a_transfer_that_fails_revalidation(
             PendingOperation(
                 PendingOperationType.FREEZE_CARD,
                 FreezeCardOperationData(VISA_CREDIT.id),
+                uuid4(),
             ),
             VISA_CREDIT,
         ),
@@ -1640,6 +1659,7 @@ def test_confirm_discards_a_transfer_that_fails_revalidation(
             PendingOperation(
                 PendingOperationType.UNFREEZE_CARD,
                 UnfreezeCardOperationData(VISA_DEBIT.id),
+                uuid4(),
             ),
             VISA_DEBIT,
         ),
@@ -1657,7 +1677,7 @@ def test_confirm_discards_a_card_operation_that_fails_revalidation(
     # The card's status changed elsewhere after pre-validation.
     conversation_id = waiting(scope, operation)
 
-    turn = interact(engine, llm, conversation_id, Confirm())
+    turn = interact(engine, llm, conversation_id, confirm(operation))
 
     assert turn.flow_state is ConversationFlowState.READY
     assert isinstance(turn.result, OperationFailedResult)
@@ -1674,11 +1694,11 @@ def test_repeated_confirm_does_not_repeat_the_operation(
     executable: FakeRepositories,
 ) -> None:
     conversation_id = waiting(scope, LAURA_25000)
-    interact(engine, llm, conversation_id, Confirm())
+    interact(engine, llm, conversation_id, confirm(LAURA_25000))
 
-    turn = interact(engine, llm, conversation_id, Confirm())
+    turn = interact(engine, llm, conversation_id, confirm(LAURA_25000))
 
-    assert turn.result == NoPendingOperationResult(Confirm())
+    assert turn.result == NoPendingOperationResult(confirm(LAURA_25000))
     assert turn.flow_state is ConversationFlowState.READY
     assert len(executable.transfers.transfers) == 1
     assert balance(scope) == Money(Decimal("125000.50"), Currency.ARS)
@@ -1686,7 +1706,7 @@ def test_repeated_confirm_does_not_repeat_the_operation(
 
 @pytest.mark.parametrize(
     ("interaction", "intent"),
-    [(Confirm(), Intent.UNKNOWN), (Cancel(), Intent.CANCEL)],
+    [(Confirm(uuid4()), Intent.UNKNOWN), (Cancel(), Intent.CANCEL)],
     ids=["confirm", "cancel"],
 )
 def test_confirm_or_cancel_without_a_pending_operation_has_no_effect(
@@ -1740,8 +1760,8 @@ def test_cancel_discards_the_pending_operation_without_executing_it(
 @pytest.mark.parametrize(
     ("flow_state", "operation", "interaction"),
     [
-        (ConversationFlowState.COLLECTING_DATA, TRANSFER_TO_LAURA, Confirm()),
-        (ConversationFlowState.COLLECTING_DATA, COLLECTING_FREEZE, Confirm()),
+        (ConversationFlowState.COLLECTING_DATA, TRANSFER_TO_LAURA, Confirm(uuid4())),
+        (ConversationFlowState.COLLECTING_DATA, COLLECTING_FREEZE, Confirm(uuid4())),
         (ConversationFlowState.READY, None, SelectCard(VISA_DEBIT.id)),
         (
             ConversationFlowState.COLLECTING_DATA,
@@ -1802,13 +1822,13 @@ def test_selected_card_is_pre_validated_and_awaits_confirmation(
         if operation_type is PendingOperationType.FREEZE_CARD
         else UnfreezeCardOperationData(card.id)
     )
-    expected = PendingOperation(operation_type, data)
     conversation_id = collecting(
         scope, PendingOperation(operation_type, replace(data, card_id=None))
     )
 
     turn = interact(engine, llm, conversation_id, SelectCard(card.id))
 
+    expected = awaiting(turn, PendingOperation(operation_type, data))
     assert turn.intent is intent
     assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
     assert turn.result == AwaitingConfirmationResult(expected, card=card)
@@ -1894,6 +1914,237 @@ def test_cancel_during_interpretation_rejects_the_collected_data(
     with pytest.raises(InvalidConversationStateError):
         reply(engine, llm, conversation_id, "25000", collection_output(amount="25000"))
 
+    assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
+    assert scope.repositories.messages.messages == []
+
+
+# Corrections while waiting for confirmation.
+
+
+def test_confirm_of_another_confirmation_request_is_rejected(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+    before = scope.repositories.conversations.records[conversation_id]
+
+    with pytest.raises(InvalidInteractionError):
+        interact(engine, llm, conversation_id, Confirm(uuid4()))
+
+    assert scope.repositories.conversations.records[conversation_id] == before
+    assert executable.transfers.transfers == []
+    assert balance(scope) == SAVINGS.balance
+
+
+def test_complete_correction_requests_a_new_confirmation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+
+    turn = reply(
+        engine,
+        llm,
+        conversation_id,
+        "No, mejor 20000",
+        collection_output(amount="20000"),
+    )
+
+    corrected = awaiting(
+        turn,
+        PendingOperation(
+            PendingOperationType.TRANSFER,
+            TransferOperationData(
+                SAVINGS.id, LAURA.id, Money(Decimal("20000"), Currency.ARS)
+            ),
+        ),
+    )
+    assert corrected.operation_id != LAURA_25000.operation_id
+    assert turn.intent is Intent.TRANSFER_MONEY
+    assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert turn.result == AwaitingConfirmationResult(
+        corrected, source_account=SAVINGS, beneficiary=LAURA
+    )
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        corrected,
+    )
+
+    # The earlier confirmation request no longer authorizes anything.
+    with pytest.raises(InvalidInteractionError):
+        interact(engine, llm, conversation_id, confirm(LAURA_25000))
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        corrected,
+    )
+    assert executable.transfers.transfers == []
+
+    confirmed = interact(engine, llm, conversation_id, confirm(corrected))
+
+    [(transfer, _)] = executable.transfers.transfers
+    assert confirmed.result == OperationCompletedResult(corrected, transfer=transfer)
+    assert transfer.amount == Money(Decimal("20000"), Currency.ARS)
+    assert balance(scope) == Money(Decimal("130000.50"), Currency.ARS)
+
+
+def test_restated_request_corrects_the_waiting_operation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "Transfer 30000 to Carlos",
+        model_output(
+            intent="TRANSFER_MONEY", amount="30000", beneficiary_reference="Carlos"
+        ),
+    )
+
+    corrected = awaiting(
+        turn,
+        PendingOperation(
+            PendingOperationType.TRANSFER,
+            TransferOperationData(
+                SAVINGS.id, CARLOS.id, Money(Decimal("30000"), Currency.ARS)
+            ),
+        ),
+    )
+    assert corrected.operation_id != LAURA_25000.operation_id
+    assert turn.result == AwaitingConfirmationResult(
+        corrected, source_account=SAVINGS, beneficiary=CARLOS
+    )
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        corrected,
+    )
+
+
+def test_incomplete_correction_returns_to_collecting(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+
+    turn = reply(
+        engine,
+        llm,
+        conversation_id,
+        "Mejor a Juan",
+        collection_output(beneficiary_reference="Juan"),
+    )
+
+    collected = PendingOperation(
+        PendingOperationType.TRANSFER,
+        TransferOperationData(
+            SAVINGS.id, None, Money(Decimal("25000.00"), Currency.ARS)
+        ),
+    )
+    assert turn.flow_state is ConversationFlowState.COLLECTING_DATA
+    assert turn.result == CollectingDataResult(
+        collected,
+        {PendingField.BENEFICIARY_ID: FieldIssue.AMBIGUOUS},
+        beneficiary_candidates=(JUAN_PEREZ, JUAN_GARCIA),
+    )
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.COLLECTING_DATA,
+        collected,
+    )
+
+    with pytest.raises(InvalidInteractionError):
+        interact(engine, llm, conversation_id, confirm(LAURA_25000))
+    assert executable.transfers.transfers == []
+
+
+def test_correction_failing_pre_validation_discards_the_operation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+
+    turn = reply(
+        engine, llm, conversation_id, "500000", collection_output(amount="500000")
+    )
+
+    assert turn.flow_state is ConversationFlowState.READY
+    assert isinstance(turn.result, PreValidationFailedResult)
+    assert isinstance(turn.result.error, InsufficientFundsError)
+    assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
+
+    stale = interact(engine, llm, conversation_id, confirm(LAURA_25000))
+
+    assert stale.result == NoPendingOperationResult(confirm(LAURA_25000))
+    assert executable.transfers.transfers == []
+    assert balance(scope) == SAVINGS.balance
+
+
+def test_reply_without_data_keeps_the_confirmation_request(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    banking: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+
+    turn = reply(engine, llm, conversation_id, "ok", collection_output())
+
+    assert turn.flow_state is ConversationFlowState.WAITING_CONFIRMATION
+    assert stored_state(scope, conversation_id) == (
+        ConversationFlowState.WAITING_CONFIRMATION,
+        LAURA_25000,
+    )
+    # The reply was then interpreted on its own.
+    assert llm.collection_calls == ["ok"]
+    assert llm.calls == ["ok"]
+
+
+def test_confirm_after_cancel_executes_nothing(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+    interact(engine, llm, conversation_id, Cancel())
+
+    turn = interact(engine, llm, conversation_id, confirm(LAURA_25000))
+
+    assert turn.result == NoPendingOperationResult(confirm(LAURA_25000))
+    assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
+    assert executable.transfers.transfers == []
+    assert balance(scope) == SAVINGS.balance
+
+
+def test_confirm_during_interpretation_rejects_the_correction(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+) -> None:
+    conversation_id = waiting(scope, LAURA_25000)
+
+    def confirm_waiting() -> None:
+        engine.handle_interaction(CUSTOMER_ID, conversation_id, confirm(LAURA_25000))
+
+    llm.on_call = confirm_waiting
+
+    with pytest.raises(InvalidConversationStateError):
+        reply(engine, llm, conversation_id, "20000", collection_output(amount="20000"))
+
+    [(transfer, _)] = executable.transfers.transfers
+    assert transfer.amount == Money(Decimal("25000.00"), Currency.ARS)
     assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
     assert scope.repositories.messages.messages == []
 

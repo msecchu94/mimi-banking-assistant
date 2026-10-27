@@ -87,8 +87,16 @@ _DATA_TYPE: dict[PendingOperationType, type[PendingOperationData]] = {
 
 @dataclass(frozen=True)
 class PendingOperation:
+    """A pending operation; ``operation_id`` identifies the confirmation
+    request of an operation waiting for confirmation, and is ``None`` otherwise.
+
+    Every pre-validated confirmation request gets a fresh ``operation_id``, so
+    a ``CONFIRM`` issued for an earlier request never matches a later one.
+    """
+
     type: PendingOperationType
     data: PendingOperationData
+    operation_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if type(self.data) is not _DATA_TYPE[self.type]:
@@ -105,19 +113,24 @@ def check_pending_state(
 ) -> None:
     """Raise ``ValueError`` unless the flow state agrees with the operation.
 
-    ``WAITING_CONFIRMATION`` requires a complete operation but cannot verify
-    that it was pre-validated; that remains the caller's responsibility.
+    ``WAITING_CONFIRMATION`` requires a complete operation with an
+    ``operation_id`` but cannot verify that it was pre-validated; that remains
+    the caller's responsibility. A collected operation has no ``operation_id``.
     """
     match flow_state:
         case ConversationFlowState.READY:
             valid = pending_operation is None
         case ConversationFlowState.COLLECTING_DATA:
-            valid = pending_operation is not None and bool(
-                pending_operation.missing_fields
+            valid = (
+                pending_operation is not None
+                and bool(pending_operation.missing_fields)
+                and pending_operation.operation_id is None
             )
         case ConversationFlowState.WAITING_CONFIRMATION:
             valid = (
-                pending_operation is not None and not pending_operation.missing_fields
+                pending_operation is not None
+                and not pending_operation.missing_fields
+                and pending_operation.operation_id is not None
             )
     if not valid:
         raise ValueError(f"{flow_state} does not match the pending operation")

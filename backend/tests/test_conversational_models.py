@@ -52,6 +52,7 @@ def test_only_pending_operation_columns_are_nullable() -> None:
 
     assert nullable == {
         "conversations.pending_operation_type",
+        "conversations.pending_operation_id",
         "conversations.pending_source_account_id",
         "conversations.pending_beneficiary_id",
         "conversations.pending_amount",
