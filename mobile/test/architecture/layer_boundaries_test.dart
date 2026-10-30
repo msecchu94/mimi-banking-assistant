@@ -72,4 +72,24 @@ void main() {
       isEmpty,
     );
   });
+
+  test('Use cases depend only on Either, Failure, models and repositories', () {
+    final files = [
+      for (final layer in _featureLayers('domain/usecases'))
+        ..._sources(layer.path),
+    ];
+    bool allowed(String uri) =>
+        uri == 'package:fpdart/fpdart.dart' ||
+        uri.endsWith('/core/error/failure.dart') ||
+        uri.startsWith('../models/') ||
+        uri.startsWith('../repositories/');
+
+    expect(files, isNotEmpty);
+    expect([
+      for (final file in files)
+        for (final line in file.readAsLinesSync())
+          if (_importPattern.firstMatch(line)?.group(1) case final uri?)
+            if (!allowed(uri)) '${file.path}: $uri',
+    ], isEmpty);
+  });
 }
