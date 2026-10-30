@@ -73,6 +73,21 @@ void main() {
     );
   });
 
+  test('Presentation reaches the repository only through use cases', () {
+    final files = [
+      for (final layer in _featureLayers('presentation'))
+        ..._sources(layer.path),
+    ];
+
+    expect(files, isNotEmpty);
+    expect(_violations(files, ['/repositories/']), isEmpty);
+    expect([
+      for (final file in files)
+        if (file.readAsStringSync().contains('chatRepositoryProvider'))
+          file.path,
+    ], isEmpty);
+  });
+
   test('Use cases depend only on Either, Failure, models and repositories', () {
     final files = [
       for (final layer in _featureLayers('domain/usecases'))
