@@ -1,0 +1,11 @@
+targets:
+  $default:
+    builders:
+      json_serializable:
+        options:
+          # The API contract uses snake_case keys.
+          field_rename: snake
+          # Wrap every decoding error in CheckedFromJsonException so the Data
+          # layer can classify any malformed response in one place.
+          checked: true
+          explicit_to_json: true
