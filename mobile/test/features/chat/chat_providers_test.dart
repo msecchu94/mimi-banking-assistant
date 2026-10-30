@@ -10,6 +10,7 @@ import 'package:mimi/features/chat/domain/models/chat_ui.dart';
 
 import '../../helpers/fake_http_client_adapter.dart';
 import 'chat_fixtures.dart';
+import 'domain/usecases/fake_chat_repository.dart' as fake;
 
 void main() {
   late ProviderContainer container;
@@ -28,6 +29,39 @@ void main() {
 
   test('binds ChatRepository to ChatRepositoryImpl', () {
     expect(container.read(chatRepositoryProvider), isA<ChatRepositoryImpl>());
+  });
+
+  test('builds the use cases on the bound ChatRepository', () async {
+    final repository = fake.FakeChatRepository();
+    final scoped = ProviderContainer(
+      overrides: [chatRepositoryProvider.overrideWithValue(repository)],
+    );
+    addTearDown(scoped.dispose);
+
+    await scoped.read(startConversationProvider)();
+    await scoped.read(sendMessageProvider)(
+      conversationId: conversationId,
+      message: 'Hola',
+    );
+    await scoped.read(confirmInteractionProvider)(
+      conversationId: conversationId,
+      operationId: operationId,
+    );
+    await scoped.read(cancelInteractionProvider)(
+      conversationId: conversationId,
+    );
+    await scoped.read(selectCardProvider)(
+      conversationId: conversationId,
+      cardId: cardId,
+    );
+
+    expect(repository.calls.map((call) => call.method), [
+      'startConversation',
+      'sendMessage',
+      'confirm',
+      'cancel',
+      'selectCard',
+    ]);
   });
 
   test('configures Dio from the base URL with the interceptor', () {
