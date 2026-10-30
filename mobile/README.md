@@ -11,6 +11,11 @@ flutter run --dart-define-from-file=config/development.json
 flutter build ipa --dart-define-from-file=config/production.json
 ```
 
+Each config file sets `APP_ENV` and `API_BASE_URL` (the backend base URL).
+Both are required: the app refuses to start without them. Production has no
+deployed backend yet, so its `API_BASE_URL` is intentionally empty and a
+production build fails at startup until a real URL is set.
+
 To add an environment (e.g. staging), add a value to `AppEnvironment` and a
 matching `config/<env>.json`.
 
