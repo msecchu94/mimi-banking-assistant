@@ -37,13 +37,21 @@ sealed class ChatState with _$ChatState {
 }
 
 extension ChatActiveView on ChatActive {
-  /// The backend's latest reply, if any.
-  ChatReply? get latestReply {
-    for (final entry in transcript.reversed) {
-      if (entry case AssistantReply(:final reply)) return reply;
-    }
-    return null;
+  /// Index in [transcript] of the latest assistant reply, if any.
+  ///
+  /// Only this entry may expose actionable response controls; earlier
+  /// replies are history. `CANCEL` carries no operation id, so a control on
+  /// a historical reply would act on whatever operation is pending now.
+  int? get latestReplyIndex {
+    final index = transcript.lastIndexWhere((e) => e is AssistantReply);
+    return index == -1 ? null : index;
   }
+
+  /// The backend's latest reply, if any.
+  ChatReply? get latestReply => switch (latestReplyIndex) {
+    final index? => (transcript[index] as AssistantReply).reply,
+    null => null,
+  };
 
   /// The backend's latest conversational flow state.
   ConversationState get flowState =>
