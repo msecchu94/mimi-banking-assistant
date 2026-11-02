@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:mimi/core/config/app_environment.dart';
+import 'package:mimi/features/home/presentation/home_page.dart';
 import 'package:mimi/main.dart' as app;
 
 /// Run with:
@@ -8,11 +8,12 @@ import 'package:mimi/main.dart' as app;
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('app launches from the composition root', (tester) async {
+  testWidgets('app launches from the composition root into Home', (
+    tester,
+  ) async {
     app.main();
     await tester.pumpAndSettle();
 
-    final environment = AppEnvironment.fromDefines();
-    expect(find.text('Mimi (${environment.name})'), findsOneWidget);
+    expect(find.byType(HomePage), findsOneWidget);
   });
 }
