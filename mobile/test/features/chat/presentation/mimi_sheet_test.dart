@@ -1,0 +1,493 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:fpdart/fpdart.dart';
+import 'package:mimi/app/theme/app_theme.dart';
+import 'package:mimi/core/error/failure.dart';
+import 'package:mimi/features/chat/chat_providers.dart';
+import 'package:mimi/features/chat/domain/models/chat_reply.dart';
+import 'package:mimi/features/chat/domain/models/chat_ui.dart';
+import 'package:mimi/features/chat/domain/models/conversation.dart';
+import 'package:mimi/features/chat/domain/models/money.dart';
+import 'package:mimi/features/chat/domain/repositories/chat_repository.dart';
+import 'package:mimi/features/chat/presentation/mimi_sheet/mimi_sheet.dart';
+import 'package:mimi/features/home/presentation/home_page.dart';
+
+import '../../../helpers/inter_font.dart';
+
+const _conversationId = '9e47b4c1-4a8c-4a3c-98d2-a31c9c87e641';
+const _operationId = '5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d';
+const _cardId = '16e39f21-93b5-48b5-a8dc-90ad03ea5dd1';
+
+const _conversation = Conversation(
+  id: _conversationId,
+  state: ConversationState.ready,
+);
+
+const _card = BankCard(
+  id: _cardId,
+  brand: CardBrand.visa,
+  type: CardType.debit,
+  lastFour: '4821',
+  status: CardStatus.active,
+);
+
+ChatReply _reply(String message, [ChatUi ui = const ChatUi.text()]) =>
+    ChatReply(
+      conversationId: _conversationId,
+      message: message,
+      intent: ChatIntent.generalConversation,
+      conversationState: ConversationState.ready,
+      ui: ui,
+    );
+
+Money _ars(String amount) => Money(amount: amount, currency: Currency.ars);
+
+final _expenseSummary = ChatUi.expenseSummary(
+  period: ExpensePeriod(
+    from: DateTime.utc(2026, 10),
+    to: DateTime.utc(2026, 10, 31),
+  ),
+  currencies: [
+    CurrencyExpenses(
+      total: _ars('184320.00'),
+      categories: [
+        CategoryExpense(
+          category: TransactionCategory.groceries,
+          amount: _ars('184320.00'),
+        ),
+      ],
+    ),
+  ],
+);
+
+final _confirmation = ChatUi.confirmation(
+  operationId: _operationId,
+  title: 'Confirmá la transferencia',
+  summary: ConfirmationSummary.transfer(
+    amount: _ars('25000.00'),
+    beneficiary: 'Martín López',
+  ),
+  actions: const [
+    ConfirmationAction(
+      type: ConfirmationActionType.confirm,
+      label: 'Confirmar',
+    ),
+    ConfirmationAction(type: ConfirmationActionType.cancel, label: 'Cancelar'),
+  ],
+);
+
+/// Answers each action with the next queued reply, optionally holding it
+/// until [hold] completes, and records every call.
+class _ScriptedRepository implements ChatRepository {
+  Either<Failure, Conversation> startResult = const Right(_conversation);
+  final List<Either<Failure, ChatReply>> replies = [];
+  final List<(String, String?)> calls = [];
+  Completer<void>? hold;
+
+  Future<Either<Failure, ChatReply>> _next(String method, [String? arg]) async {
+    calls.add((method, arg));
+    if (hold case final hold?) await hold.future;
+    return replies.removeAt(0);
+  }
+
+  @override
+  Future<Either<Failure, Conversation>> startConversation() async {
+    calls.add(('start', null));
+    return startResult;
+  }
+
+  @override
+  Future<Either<Failure, ChatReply>> sendMessage({
+    required String conversationId,
+    required String message,
+  }) => _next('sendMessage', message);
+
+  @override
+  Future<Either<Failure, ChatReply>> confirm({
+    required String conversationId,
+    required String operationId,
+  }) => _next('confirm', operationId);
+
+  @override
+  Future<Either<Failure, ChatReply>> cancel({required String conversationId}) =>
+      _next('cancel');
+
+  @override
+  Future<Either<Failure, ChatReply>> selectCard({
+    required String conversationId,
+    required String cardId,
+  }) => _next('selectCard', cardId);
+
+  int count(String method) => calls.where((c) => c.$1 == method).length;
+}
+
+const _narrow = Size(320, 568);
+const _common = Size(390, 844);
+
+Future<void> _pumpHome(
+  WidgetTester tester,
+  _ScriptedRepository repository, {
+  Size size = _common,
+  EdgeInsets safeArea = EdgeInsets.zero,
+}) async {
+  tester.view
+    ..physicalSize = size
+    ..devicePixelRatio = 1
+    ..padding = FakeViewPadding(top: safeArea.top, bottom: safeArea.bottom);
+  addTearDown(tester.view.reset);
+
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [chatRepositoryProvider.overrideWithValue(repository)],
+      child: MaterialApp(theme: buildAppTheme(), home: const HomePage()),
+    ),
+  );
+}
+
+Future<void> _openMimi(WidgetTester tester) async {
+  await tester.tap(find.text('✦ Mimi'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _send(WidgetTester tester, String message) async {
+  await tester.enterText(find.byType(TextField), message);
+  await tester.pump();
+  await tester.tap(find.bySemanticsLabel('Enviar'));
+  await tester.pumpAndSettle();
+}
+
+double _sheetHeight(WidgetTester tester) =>
+    tester.getSize(find.byKey(MimiSheet.surfaceKey)).height;
+
+double _screenHeight(WidgetTester tester) =>
+    tester.view.physicalSize.height / tester.view.devicePixelRatio;
+
+bool _isExpanded(WidgetTester tester) =>
+    _sheetHeight(tester) > _screenHeight(tester) * 0.9;
+
+void main() {
+  setUpAll(loadInterFont);
+
+  testWidgets('opens compact over Home and starts the conversation', (
+    tester,
+  ) async {
+    final repository = _ScriptedRepository();
+    await _pumpHome(tester, repository);
+
+    await _openMimi(tester);
+
+    expect(find.text('¿En qué puedo ayudarte hoy?'), findsOneWidget);
+    expect(find.text('Preguntale algo a Mimi'), findsOneWidget);
+    expect(find.byType(HomePage), findsOneWidget);
+    expect(_sheetHeight(tester), lessThan(_screenHeight(tester) * 0.75));
+    expect(repository.calls, [('start', null)]);
+  });
+
+  testWidgets('drags between compact and expanded, then closes', (
+    tester,
+  ) async {
+    await _pumpHome(tester, _ScriptedRepository());
+    await _openMimi(tester);
+
+    await tester.drag(
+      find.bySemanticsLabel('Expandir Mimi'),
+      const Offset(0, -500),
+    );
+    await tester.pumpAndSettle();
+    expect(_isExpanded(tester), isTrue);
+
+    await tester.drag(
+      find.bySemanticsLabel('Contraer Mimi'),
+      const Offset(0, 600),
+    );
+    await tester.pumpAndSettle();
+    expect(_isExpanded(tester), isFalse);
+    expect(find.byType(MimiSheet), findsOneWidget);
+
+    await tester.drag(
+      find.bySemanticsLabel('Expandir Mimi'),
+      const Offset(0, 300),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(MimiSheet), findsNothing);
+  });
+
+  testWidgets('tapping the handle toggles the detent', (tester) async {
+    await _pumpHome(tester, _ScriptedRepository());
+    await _openMimi(tester);
+
+    await tester.tap(find.bySemanticsLabel('Expandir Mimi'));
+    await tester.pumpAndSettle();
+    expect(_isExpanded(tester), isTrue);
+
+    await tester.tap(find.bySemanticsLabel('Contraer Mimi'));
+    await tester.pumpAndSettle();
+    expect(_isExpanded(tester), isFalse);
+  });
+
+  testWidgets('focusing the composer expands the sheet', (tester) async {
+    await _pumpHome(tester, _ScriptedRepository());
+    await _openMimi(tester);
+
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+
+    expect(_isExpanded(tester), isTrue);
+  });
+
+  testWidgets('shows the message while Mimi answers, then the reply', (
+    tester,
+  ) async {
+    final repository = _ScriptedRepository()
+      ..replies.add(Right(_reply(r'Tu saldo es $ 1.284.650,75.')))
+      ..hold = Completer();
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+
+    await tester.enterText(find.byType(TextField), '¿Cuál es mi saldo?');
+    await tester.pump();
+    await tester.tap(find.bySemanticsLabel('Enviar'));
+    await tester.pump();
+
+    expect(find.text('¿Cuál es mi saldo?'), findsOneWidget);
+    expect(find.text('Mimi está pensando…'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'Otra pregunta');
+    await tester.pump();
+    await tester.tap(find.bySemanticsLabel('Enviar'));
+    expect(repository.count('sendMessage'), 1, reason: 'one action at a time');
+
+    repository.hold!.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text(r'Tu saldo es $ 1.284.650,75.'), findsOneWidget);
+    expect(find.text('Mimi está pensando…'), findsNothing);
+    expect(repository.calls.last, ('sendMessage', '¿Cuál es mi saldo?'));
+  });
+
+  testWidgets('a failed message returns to the composer, explained', (
+    tester,
+  ) async {
+    final repository = _ScriptedRepository()
+      ..replies.add(const Left(ConnectionFailure()));
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+
+    await _send(tester, '¿Cuánto gasté este mes?');
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '¿Cuánto gasté este mes?');
+    expect(find.textContaining('No pudimos conectarnos'), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+  });
+
+  testWidgets('a failed start offers a retry', (tester) async {
+    final repository = _ScriptedRepository()
+      ..startResult = const Left(ConnectionFailure());
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+
+    expect(find.text('No pudimos iniciar la conversación.'), findsOneWidget);
+
+    repository.startResult = const Right(_conversation);
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No pudimos iniciar la conversación.'), findsNothing);
+    expect(repository.count('start'), 2);
+  });
+
+  testWidgets('reopening continues the same conversation', (tester) async {
+    final repository = _ScriptedRepository()
+      ..replies.add(Right(_reply('¡Hola! ¿En qué te ayudo?')));
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+    await _send(tester, 'Hola');
+
+    await tester.drag(
+      find.bySemanticsLabel('Contraer Mimi'),
+      const Offset(0, 600),
+    );
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.bySemanticsLabel('Expandir Mimi'),
+      const Offset(0, 300),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(MimiSheet), findsNothing);
+
+    await _openMimi(tester);
+
+    expect(find.text('¡Hola! ¿En qué te ayudo?'), findsOneWidget);
+    expect(repository.count('start'), 1);
+  });
+
+  testWidgets('shows the expense summary exactly as the backend sent it', (
+    tester,
+  ) async {
+    final repository = _ScriptedRepository()
+      ..replies.add(
+        Right(
+          _reply(
+            r'Este mes gastaste $184.320 en supermercados.',
+            _expenseSummary,
+          ),
+        ),
+      );
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+
+    await _send(tester, '¿Cuánto gasté en supermercado este mes?');
+
+    expect(
+      find.text(r'Este mes gastaste $184.320 en supermercados.'),
+      findsOneWidget,
+    );
+    expect(find.text('Gastos · 1 – 31 oct 2026'), findsOneWidget);
+    expect(find.text(r'$ 184.320,00'), findsNWidgets(2));
+    expect(find.text('Supermercado'), findsOneWidget);
+    expect(find.textContaining('%'), findsNothing);
+  });
+
+  testWidgets('only the latest reply exposes confirmation actions', (
+    tester,
+  ) async {
+    final repository = _ScriptedRepository()
+      ..replies.addAll([
+        Right(_reply('Revisá la transferencia.', _confirmation)),
+        Right(_reply('Listo, la transferencia se realizó.')),
+      ]);
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+    await _send(tester, r'Transferí $25.000 a Martín');
+
+    expect(find.text('Confirmá la transferencia'), findsOneWidget);
+    expect(find.text(r'$ 25.000,00'), findsOneWidget);
+    await tester.tap(find.text('Confirmar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.calls.last, ('confirm', _operationId));
+    expect(find.text('Confirmá la transferencia'), findsOneWidget);
+    expect(find.text('Confirmar'), findsNothing, reason: 'now history');
+    expect(find.text('Cancelar'), findsNothing);
+  });
+
+  testWidgets('cancel sends the structured CANCEL interaction', (tester) async {
+    final repository = _ScriptedRepository()
+      ..replies.addAll([
+        Right(_reply('Revisá la transferencia.', _confirmation)),
+        Right(_reply('Cancelé la operación.')),
+      ]);
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+    await _send(tester, r'Transferí $25.000 a Martín');
+
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.calls.last, ('cancel', null));
+    expect(repository.count('sendMessage'), 1, reason: 'not sent as text');
+  });
+
+  testWidgets('the card selector sends the selected card', (tester) async {
+    final repository = _ScriptedRepository()
+      ..replies.addAll([
+        Right(
+          _reply(
+            '¿Qué tarjeta querés congelar?',
+            const ChatUi.cardSelector(cards: [_card]),
+          ),
+        ),
+        Right(_reply('Revisá la operación.')),
+      ]);
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+    await _send(tester, 'Congelá mi tarjeta');
+
+    await tester.tap(find.text('Visa Débito •••• 4821'));
+    await tester.pumpAndSettle();
+
+    expect(repository.calls.last, ('selectCard', _cardId));
+    await tester.tap(find.text('Visa Débito •••• 4821'));
+    await tester.pumpAndSettle();
+    expect(repository.count('selectCard'), 1, reason: 'now history');
+  });
+
+  testWidgets('other UI types show the backend message only in FL-05B', (
+    tester,
+  ) async {
+    final repository = _ScriptedRepository()
+      ..replies.add(
+        Right(
+          _reply('Tenés una tarjeta.', const ChatUi.cardList(cards: [_card])),
+        ),
+      );
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+
+    await _send(tester, '¿Qué tarjetas tengo?');
+
+    expect(find.text('Tenés una tarjeta.'), findsOneWidget);
+    expect(find.text('Visa Débito •••• 4821'), findsNothing);
+  });
+
+  final layouts = {
+    '320 px': (_narrow, EdgeInsets.zero),
+    '390 px': (_common, EdgeInsets.zero),
+    'iPhone 16 Pro': (
+      const Size(402, 874),
+      const EdgeInsets.only(top: 62, bottom: 34),
+    ),
+  };
+  layouts.forEach((name, layout) {
+    testWidgets('lays out compact, expanded and with the keyboard at $name', (
+      tester,
+    ) async {
+      final repository = _ScriptedRepository()
+        ..replies.addAll([
+          Right(
+            _reply(
+              r'Este mes gastaste $184.320 en supermercados.',
+              _expenseSummary,
+            ),
+          ),
+          Right(_reply('Revisá la transferencia.', _confirmation)),
+        ]);
+      await _pumpHome(tester, repository, size: layout.$1, safeArea: layout.$2);
+      await _openMimi(tester);
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TextField).hitTestable(), findsOneWidget);
+
+      await _send(tester, '¿Cuánto gasté en supermercado este mes?');
+      await _send(tester, r'Transferí $25.000 a Martín');
+      expect(tester.takeException(), isNull);
+      expect(find.text('Confirmar').hitTestable(), findsOneWidget);
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TextField).hitTestable(), findsOneWidget);
+      expect(find.text('Confirmar').hitTestable(), findsOneWidget);
+    });
+  });
+
+  testWidgets('meets tap target and labelling guidelines', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final repository = _ScriptedRepository()
+      ..replies.add(Right(_reply('Revisá la transferencia.', _confirmation)));
+    await _pumpHome(tester, repository);
+    await _openMimi(tester);
+
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+
+    await _send(tester, r'Transferí $25.000 a Martín');
+
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+    semantics.dispose();
+  });
+}
