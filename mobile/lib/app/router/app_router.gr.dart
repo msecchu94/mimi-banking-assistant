@@ -11,20 +11,20 @@
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 
 import 'package:auto_route/auto_route.dart' as _i2;
-import 'package:mimi/app/foundation_page.dart' as _i1;
+import 'package:mimi/features/home/presentation/home_page.dart' as _i1;
 
 /// generated route for
-/// [_i1.FoundationPage]
-class FoundationRoute extends _i2.PageRouteInfo<void> {
-  const FoundationRoute({List<_i2.PageRouteInfo>? children})
-    : super(FoundationRoute.name, initialChildren: children);
+/// [_i1.HomePage]
+class HomeRoute extends _i2.PageRouteInfo<void> {
+  const HomeRoute({List<_i2.PageRouteInfo>? children})
+    : super(HomeRoute.name, initialChildren: children);
 
-  static const String name = 'FoundationRoute';
+  static const String name = 'HomeRoute';
 
   static _i2.PageInfo page = _i2.PageInfo(
     name,
     builder: (data) {
-      return const _i1.FoundationPage();
+      return const _i1.HomePage();
     },
   );
 }

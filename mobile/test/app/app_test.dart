@@ -1,23 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mimi/app/app.dart';
-import 'package:mimi/core/config/app_environment.dart';
-import 'package:mimi/core/config/app_environment_provider.dart';
+import 'package:mimi/features/home/presentation/home_page.dart';
 
 void main() {
-  testWidgets('boots through the router with the injected environment', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          appEnvironmentProvider.overrideWithValue(AppEnvironment.production),
-        ],
-        child: const MimiApp(),
-      ),
-    );
+  testWidgets('boots through the router into Home', (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: MimiApp()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Mimi (production)'), findsOneWidget);
+    expect(find.byType(HomePage), findsOneWidget);
   });
 }

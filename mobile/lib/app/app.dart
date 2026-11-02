@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'router/app_router.dart';
+import 'theme/app_theme.dart';
 
 class MimiApp extends StatefulWidget {
   const MimiApp({super.key});
@@ -14,6 +15,10 @@ class _MimiAppState extends State<MimiApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(title: 'Mimi', routerConfig: _router.config());
+    return MaterialApp.router(
+      title: 'Mimi',
+      theme: buildAppTheme(),
+      routerConfig: _router.config(),
+    );
   }
 }
