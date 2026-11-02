@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mimi/shared/design_system/components/mimi_button.dart';
+import 'package:mimi/shared/design_system/components/mimi_composer.dart';
 import 'package:mimi/shared/design_system/components/mimi_fab.dart';
 import 'package:mimi/shared/design_system/components/mimi_icon_button.dart';
 
@@ -71,5 +72,59 @@ void main() {
 
     expect(taps, 1);
     expect(tester.getSize(find.byType(MimiFab)).height, 48);
+  });
+
+  group('MimiComposer', () {
+    Future<List<String>> pumpComposer(
+      WidgetTester tester,
+      TextEditingController controller, {
+      bool canSend = true,
+    }) async {
+      final sent = <String>[];
+      await _pump(
+        tester,
+        MimiComposer(
+          controller: controller,
+          canSend: canSend,
+          onSend: sent.add,
+        ),
+      );
+      return sent;
+    }
+
+    testWidgets('sends the trimmed text only when there is some', (
+      tester,
+    ) async {
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      final sent = await pumpComposer(tester, controller);
+
+      await tester.tap(find.bySemanticsLabel('Enviar'));
+      expect(sent, isEmpty);
+
+      await tester.enterText(find.byType(TextField), '  Hola Mimi  ');
+      await tester.pump();
+      await tester.tap(find.bySemanticsLabel('Enviar'));
+
+      expect(sent, ['Hola Mimi']);
+    });
+
+    testWidgets('does not send while sending is unavailable', (tester) async {
+      final controller = TextEditingController(text: 'Hola');
+      addTearDown(controller.dispose);
+      final sent = await pumpComposer(tester, controller, canSend: false);
+
+      await tester.tap(find.bySemanticsLabel('Enviar'));
+
+      expect(sent, isEmpty);
+    });
+
+    testWidgets('keeps a 48 px send target', (tester) async {
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      await pumpComposer(tester, controller);
+
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    });
   });
 }

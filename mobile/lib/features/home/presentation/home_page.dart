@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../../../shared/design_system/components/mimi_fab.dart';
 import '../../../shared/design_system/mimi_tokens.dart';
+import '../../chat/presentation/mimi_sheet/show_mimi_sheet.dart';
 import 'home_mock_data.dart';
 import 'widgets/account_summary_card.dart';
 import 'widgets/balance_section.dart';
@@ -77,8 +78,7 @@ class _HomePageState extends State<HomePage> {
                     end: MimiSpacing.screenInset,
                     bottom: MimiSpacing.lg,
                   ),
-                  // The Mimi Bottom Sheet is outside FL-06.
-                  child: MimiFab(onPressed: () {}),
+                  child: MimiFab(onPressed: () => showMimiSheet(context)),
                 ),
               ),
             ),
