@@ -25,7 +25,7 @@ String formatMoney(Money money) {
 
 String categoryLabel(TransactionCategory category) => switch (category) {
   TransactionCategory.groceries => 'Supermercado',
-  TransactionCategory.dining => 'Restaurantes',
+  TransactionCategory.dining => 'Gastronomía',
   TransactionCategory.transport => 'Transporte',
   TransactionCategory.fuel => 'Combustible',
   TransactionCategory.utilities => 'Servicios',
@@ -50,6 +50,24 @@ const _months = [
   'nov',
   'dic',
 ];
+
+/// A transaction's amount with its direction, e.g. `− $ 17.650,00` or
+/// `+ $ 150.000,00`, as on Home.
+///
+/// The sign comes from [Transaction.type], never from the amount.
+String transactionAmountLabel(Transaction transaction) {
+  final sign = switch (transaction.type) {
+    TransactionType.debit => '−',
+    TransactionType.credit => '+',
+  };
+  return '$sign ${formatMoney(transaction.amount)}';
+}
+
+/// A compact day in the device's timezone, e.g. `26 oct`.
+String shortDateLabel(DateTime timestamp) {
+  final local = timestamp.toLocal();
+  return '${local.day} ${_months[local.month - 1]}';
+}
 
 /// A period of whole days, e.g. `1 – 31 oct 2026`.
 String periodLabel(ExpensePeriod period) {

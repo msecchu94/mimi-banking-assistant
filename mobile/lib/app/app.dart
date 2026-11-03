@@ -16,6 +16,7 @@ class _MimiAppState extends State<MimiApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
+      debugShowCheckedModeBanner: false,
       title: 'Mimi',
       theme: buildAppTheme(),
       routerConfig: _router.config(),

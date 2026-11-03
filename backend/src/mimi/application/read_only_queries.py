@@ -59,6 +59,9 @@ _INHERITABLE_FIELDS: dict[Intent, frozenset[str]] = {
     Intent.COMPARE_EXPENSES: frozenset({"category", "period", "comparison_period"}),
 }
 
+# An unqualified transactions query returns only the most recent ones.
+RECENT_TRANSACTIONS_LIMIT = 10
+
 type PreparedQuery = Interpretation | IncompleteQueryResult | UnhandledIntentResult
 
 
@@ -76,7 +79,9 @@ class ReadOnlyQueryRouter:
     Period defaults: expense analysis covers the current month; an expense
     comparison with one side omitted uses its matching current or previous
     period at the same scale, and a calendar month is compared with the
-    current month; transactions are not filtered by date. A calendar month
+    current month; transactions are not filtered by date, and a transactions
+    query with no period, category or type returns only the
+    ``RECENT_TRANSACTIONS_LIMIT`` most recent ones. A calendar month
     without a year is anchored to its latest occurrence not after the current
     month before anything else uses it.
     """
@@ -223,6 +228,13 @@ class ReadOnlyQueryRouter:
                     occurred_to=None if period is None else period.end,
                     category=query.category,
                     type=query.transaction_type,
+                    limit=(
+                        RECENT_TRANSACTIONS_LIMIT
+                        if period is None
+                        and query.category is None
+                        and query.transaction_type is None
+                        else None
+                    ),
                 )
                 transactions = GetTransactions(repositories.transactions).execute(
                     customer_id, transaction_query

@@ -31,7 +31,10 @@ from mimi.application.interpretation import (
     RelativePeriod,
 )
 from mimi.application.pending_operations import PendingOperation
-from mimi.application.read_only_queries import ReadOnlyQueryRouter
+from mimi.application.read_only_queries import (
+    RECENT_TRANSACTIONS_LIMIT,
+    ReadOnlyQueryRouter,
+)
 from mimi.application.repositories import ConversationRecord, TransactionQuery
 from mimi.application.use_cases.analyze_expenses import Period
 from mimi.application.use_cases.compare_expenses import ExpenseChange
@@ -399,7 +402,7 @@ def test_customer_without_data_gets_empty_result(
     assert result == expected
 
 
-def test_transactions_without_period_are_unfiltered_and_unlimited(
+def test_unqualified_transactions_are_the_most_recent_unfiltered_by_date(
     router: ReadOnlyQueryRouter, repositories: FakeRepositories
 ) -> None:
     result = route(router, repositories, Interpretation(intent=Intent.GET_TRANSACTIONS))
@@ -408,7 +411,48 @@ def test_transactions_without_period_are_unfiltered_and_unlimited(
         (OCTOBER_DINING, OCTOBER_GROCERIES, OCTOBER_SALARY, SEPTEMBER_GROCERIES),
         period=None,
     )
-    assert repositories.transactions.queries == [TransactionQuery()]
+    assert repositories.transactions.queries == [
+        TransactionQuery(limit=RECENT_TRANSACTIONS_LIMIT)
+    ]
+
+
+def test_unqualified_transactions_return_only_the_ten_most_recent(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    history = [
+        make_transaction("100.00", NOW - timedelta(days=day)) for day in range(15)
+    ]
+    repositories = FakeRepositories(BankData(transactions={CUSTOMER_ID: history}))
+
+    result = route(router, repositories, Interpretation(intent=Intent.GET_TRANSACTIONS))
+
+    assert RECENT_TRANSACTIONS_LIMIT == 10
+    assert result == TransactionsResult(tuple(history[:10]), period=None)
+
+
+@pytest.mark.parametrize(
+    "interpretation",
+    [
+        Interpretation(
+            intent=Intent.GET_TRANSACTIONS, period=PeriodReference.CURRENT_MONTH
+        ),
+        Interpretation(
+            intent=Intent.GET_TRANSACTIONS, category=TransactionCategory.GROCERIES
+        ),
+        Interpretation(
+            intent=Intent.GET_TRANSACTIONS, transaction_type=TransactionType.DEBIT
+        ),
+    ],
+)
+def test_qualified_transactions_are_not_limited(
+    router: ReadOnlyQueryRouter,
+    repositories: FakeRepositories,
+    interpretation: Interpretation,
+) -> None:
+    route(router, repositories, interpretation)
+
+    [query] = repositories.transactions.queries
+    assert query.limit is None
 
 
 def test_transactions_apply_resolved_period_category_and_type(

@@ -65,6 +65,63 @@ void main() {
     expect(cardLabel(card), 'Visa Débito •••• 4821');
   });
 
+  test('categories read in Spanish', () {
+    const expected = {
+      TransactionCategory.dining: 'Gastronomía',
+      TransactionCategory.groceries: 'Supermercado',
+      TransactionCategory.transport: 'Transporte',
+      TransactionCategory.fuel: 'Combustible',
+      TransactionCategory.utilities: 'Servicios',
+      TransactionCategory.shopping: 'Compras',
+      TransactionCategory.subscriptions: 'Suscripciones',
+      TransactionCategory.entertainment: 'Entretenimiento',
+      TransactionCategory.transfer: 'Transferencias',
+      TransactionCategory.other: 'Otros',
+    };
+    for (final category in TransactionCategory.values) {
+      expect(categoryLabel(category), expected[category]);
+    }
+  });
+
+  group('transactionAmountLabel', () {
+    Transaction transaction(TransactionType type, Money amount) => Transaction(
+      id: 't-1',
+      description: 'Movimiento',
+      amount: amount,
+      type: type,
+      category: TransactionCategory.other,
+      occurredAt: DateTime.utc(2026, 10, 26, 12),
+    );
+
+    test('a debit is negative and a credit positive, by type', () {
+      final amount = Money(amount: '17650.00', currency: Currency.ars);
+
+      expect(
+        transactionAmountLabel(transaction(TransactionType.debit, amount)),
+        r'− $ 17.650,00',
+      );
+      expect(
+        transactionAmountLabel(transaction(TransactionType.credit, amount)),
+        r'+ $ 17.650,00',
+      );
+    });
+
+    test('keeps the backend currency', () {
+      final amount = Money(amount: '25.00', currency: Currency.usd);
+
+      expect(
+        transactionAmountLabel(transaction(TransactionType.credit, amount)),
+        r'+ US$ 25,00',
+      );
+    });
+  });
+
+  test('shortDateLabel is a compact local day', () {
+    // Midday UTC is the same calendar day in every common timezone.
+    expect(shortDateLabel(DateTime.utc(2026, 10, 26, 12)), '26 oct');
+    expect(shortDateLabel(DateTime.utc(2026, 1, 5, 12)), '5 ene');
+  });
+
   test('card brand, type and status read in Spanish', () {
     expect(cardBrandLabel(CardBrand.visa), 'Visa');
     expect(cardBrandLabel(CardBrand.mastercard), 'Mastercard');

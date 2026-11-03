@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../../../shared/design_system/components/mimi_card.dart';
 import '../../../../../shared/design_system/mimi_tokens.dart';
 import '../../../../../shared/design_system/mimi_typography.dart';
 import '../../../domain/models/chat_ui.dart';
@@ -65,8 +66,9 @@ class _CardTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return MergeSemantics(
       child: DecoratedBox(
+        // Home's elevated card tone; `surface` reads almost black on the sheet.
         decoration: BoxDecoration(
-          color: MimiColors.surface,
+          color: MimiColors.surfaceElevated,
           border: Border.all(color: _outline),
           borderRadius: BorderRadius.circular(MimiRadius.lg),
         ),
@@ -119,8 +121,8 @@ class _TypeChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: const ShapeDecoration(
-        color: MimiColors.surfaceElevated,
-        shape: StadiumBorder(),
+        color: MimiColors.surfaceGlassStrong,
+        shape: StadiumBorder(side: BorderSide(color: MimiCard.outlineColor)),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(

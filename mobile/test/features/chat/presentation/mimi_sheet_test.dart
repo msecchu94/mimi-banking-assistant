@@ -13,9 +13,11 @@ import 'package:mimi/features/chat/domain/models/conversation.dart';
 import 'package:mimi/features/chat/domain/models/money.dart';
 import 'package:mimi/features/chat/domain/repositories/chat_repository.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/card_list_view.dart';
+import 'package:mimi/features/chat/presentation/conversation/replies/transaction_list_view.dart';
 import 'package:mimi/features/chat/presentation/mimi_sheet/mimi_sheet.dart';
 import 'package:mimi/features/home/presentation/home_page.dart';
 import 'package:mimi/shared/design_system/components/mimi_button.dart';
+import 'package:mimi/shared/design_system/mimi_tokens.dart';
 
 import '../../../helpers/inter_font.dart';
 
@@ -479,7 +481,7 @@ void main() {
       final repository = await showCards(tester, cards);
       final callsBefore = repository.calls.length;
 
-      for (final label in ['Mastercard', '•••• 4821']) {
+      for (final label in ['Mastercard', '•••• 5307']) {
         await tester.tap(find.text(label));
         await tester.pumpAndSettle();
       }
@@ -517,6 +519,143 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('•••• 4821').hitTestable(), findsOneWidget);
       expect(find.text('Activa').hitTestable(), findsOneWidget);
+    });
+  });
+
+  group('transaction list', () {
+    Transaction transaction(
+      String id,
+      String description,
+      String amount,
+      TransactionType type,
+      TransactionCategory category,
+      int day,
+    ) => Transaction(
+      id: id,
+      description: description,
+      amount: _ars(amount),
+      type: type,
+      category: category,
+      occurredAt: DateTime.utc(2026, 10, day, 12),
+    );
+
+    final transactions = [
+      transaction(
+        'tx-cafe-0001',
+        'Café Plaza Norte',
+        '17650.00',
+        TransactionType.debit,
+        TransactionCategory.dining,
+        26,
+      ),
+      transaction(
+        'tx-super-0002',
+        'Supermercado La Estancia',
+        '52410.70',
+        TransactionType.debit,
+        TransactionCategory.groceries,
+        24,
+      ),
+      transaction(
+        'tx-freelance-0003',
+        'Pago freelance — Diseño web',
+        '150000.00',
+        TransactionType.credit,
+        TransactionCategory.other,
+        18,
+      ),
+    ];
+
+    Future<_ScriptedRepository> showTransactions(
+      WidgetTester tester,
+      List<Transaction> transactions, {
+      Size size = _common,
+    }) async {
+      final repository = _ScriptedRepository()
+        ..replies.add(
+          Right(
+            _reply(
+              'Encontré tus movimientos.',
+              ChatUi.transactionList(transactions: transactions),
+            ),
+          ),
+        );
+      await _pumpHome(tester, repository, size: size);
+      await _openMimi(tester);
+      await _send(tester, 'Mostrame mis últimos movimientos');
+      return repository;
+    }
+
+    testWidgets('shows each transaction from the backend under its message', (
+      tester,
+    ) async {
+      await showTransactions(tester, transactions);
+
+      expect(find.text('Encontré tus movimientos.'), findsOneWidget);
+      expect(find.text('Café Plaza Norte'), findsOneWidget);
+      expect(find.text('Supermercado La Estancia'), findsOneWidget);
+      expect(find.text('Pago freelance — Diseño web'), findsOneWidget);
+      expect(find.text('Gastronomía'), findsOneWidget);
+      expect(find.text('Supermercado'), findsOneWidget);
+      expect(find.text('Otros'), findsOneWidget);
+      expect(find.text(r'− $ 17.650,00'), findsOneWidget);
+      expect(find.text(r'− $ 52.410,70'), findsOneWidget);
+      expect(find.text('26 oct'), findsOneWidget);
+      expect(find.text('18 oct'), findsOneWidget);
+      for (final transaction in transactions) {
+        expect(find.textContaining(transaction.id), findsNothing);
+      }
+    });
+
+    testWidgets('marks a credit as positive, in the positive color', (
+      tester,
+    ) async {
+      await showTransactions(tester, transactions);
+
+      final credit = tester.widget<Text>(find.text(r'+ $ 150.000,00'));
+      final debit = tester.widget<Text>(find.text(r'− $ 17.650,00'));
+      expect(credit.style?.color, MimiColors.success);
+      expect(debit.style?.color, MimiColors.textPrimary);
+    });
+
+    testWidgets('is display only', (tester) async {
+      final repository = await showTransactions(tester, transactions);
+      final callsBefore = repository.calls.length;
+
+      await tester.tap(find.text('Café Plaza Norte'));
+      await tester.pumpAndSettle();
+
+      expect(repository.calls, hasLength(callsBefore));
+      final controls = find.descendant(
+        of: find.byType(TransactionListView),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is InkResponse ||
+              widget is MimiButton ||
+              (widget is GestureDetector && widget.onTap != null),
+        ),
+      );
+      expect(controls, findsNothing);
+    });
+
+    testWidgets('lays out ten long transactions at 320 px', (tester) async {
+      final many = [
+        for (var day = 1; day <= 10; day++)
+          transaction(
+            'tx-$day',
+            'Delivery — Empanadas La Tucumana, sucursal centro $day',
+            '1150000.00',
+            day.isEven ? TransactionType.credit : TransactionType.debit,
+            TransactionCategory.values[day % TransactionCategory.values.length],
+            day,
+          ),
+      ];
+      await showTransactions(tester, many, size: _narrow);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TextField).hitTestable(), findsOneWidget);
+      expect(find.text(r'+ $ 1.150.000,00'), findsNWidgets(5));
+      expect(find.text(r'− $ 1.150.000,00'), findsNWidgets(5));
     });
   });
 

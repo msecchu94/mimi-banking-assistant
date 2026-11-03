@@ -14,6 +14,7 @@ import 'replies/card_list_view.dart';
 import 'replies/card_selector_view.dart';
 import 'replies/confirmation_view.dart';
 import 'replies/expense_summary_view.dart';
+import 'replies/transaction_list_view.dart';
 
 /// The conversation with Mimi, rendered from the shared [ChatState].
 class ChatConversation extends ConsumerWidget {
@@ -100,6 +101,7 @@ class _AssistantReply extends StatelessWidget {
     final structured = switch (reply.ui) {
       final ExpenseSummaryUi ui => ExpenseSummaryView(ui: ui),
       final CardListUi ui => CardListView(ui: ui),
+      final TransactionListUi ui => TransactionListView(ui: ui),
       final ConfirmationUi ui => ConfirmationView(
         ui: ui,
         actionable: actionable,
