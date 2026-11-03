@@ -129,6 +129,7 @@ void main() {
       expect(
         _ui(expenseComparisonUiJson),
         ChatUi.expenseComparison(
+          category: TransactionCategory.groceries,
           currentPeriod: ExpensePeriod(
             from: DateTime.utc(2026, 10, 1),
             to: DateTime.utc(2026, 10, 31),
@@ -147,6 +148,18 @@ void main() {
           ],
         ),
       );
+    });
+
+    test('EXPENSE_COMPARISON of all expenses has no category', () {
+      final ui = _ui({
+        'type': 'EXPENSE_COMPARISON',
+        'data': {
+          ...expenseComparisonUiJson['data']! as Map<String, Object?>,
+          'category': null,
+        },
+      });
+
+      expect((ui as ExpenseComparisonUi).category, isNull);
     });
 
     test('TRANSACTION_LIST', () {
@@ -224,6 +237,23 @@ void main() {
           transferSummary({
             'amount': {'amount': '1.00', 'currency': 'EUR'},
           }),
+        ),
+        _invalidResponse,
+      );
+    });
+
+    test('an unknown comparison category', () {
+      expect(
+        () => _reply(
+          chatResponseJson(
+            ui: {
+              'type': 'EXPENSE_COMPARISON',
+              'data': {
+                ...expenseComparisonUiJson['data']! as Map<String, Object?>,
+                'category': 'PETS',
+              },
+            },
+          ),
         ),
         _invalidResponse,
       );

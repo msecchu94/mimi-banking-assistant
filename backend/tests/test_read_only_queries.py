@@ -694,7 +694,8 @@ def test_expense_analysis_of_a_calendar_month(
     ("period", "comparison_period", "expected_current", "expected_previous"),
     [
         (CalendarMonth(10), CalendarMonth(9), OCTOBER, SEPTEMBER),
-        (CalendarMonth(9), CalendarMonth(10), SEPTEMBER, OCTOBER),
+        # Named in reverse order: the later month is still the one evaluated.
+        (CalendarMonth(9), CalendarMonth(10), OCTOBER, SEPTEMBER),
         (None, CalendarMonth(9), OCTOBER, SEPTEMBER),
         (CalendarMonth(10), None, OCTOBER, SEPTEMBER),
         (PeriodReference.CURRENT_MONTH, CalendarMonth(9, 2026), OCTOBER, SEPTEMBER),
@@ -719,6 +720,163 @@ def test_expense_comparison_of_calendar_months(
     assert isinstance(result, ExpenseComparisonResult)
     assert result.comparison.current.period == expected_current
     assert result.comparison.previous.period == expected_previous
+
+
+# Expenses that went down from September to October, overall and on groceries.
+FALLING_EXPENSES = [
+    make_transaction("291912.00", local(10, 20)),
+    make_transaction("546487.00", local(10, 22), category=TransactionCategory.DINING),
+    make_transaction("323251.25", local(9, 20)),
+    make_transaction("607487.00", local(9, 22), category=TransactionCategory.DINING),
+]
+
+
+@pytest.mark.parametrize(
+    ("period", "comparison_period"),
+    [
+        # "octubre con septiembre"
+        (CalendarMonth(10), CalendarMonth(9)),
+        # "septiembre con octubre", "entre septiembre y octubre"
+        (CalendarMonth(9), CalendarMonth(10)),
+        (CalendarMonth(9, 2026), CalendarMonth(10, 2026)),
+    ],
+    ids=["later_first", "earlier_first", "earlier_first_with_years"],
+)
+@pytest.mark.parametrize(
+    ("category", "current_total", "previous_total", "difference"),
+    [
+        (None, "838399.00", "930738.25", "92339.25"),
+        (TransactionCategory.GROCERIES, "291912.00", "323251.25", "31339.25"),
+    ],
+    ids=["all_expenses", "groceries"],
+)
+def test_explicit_months_compare_the_later_against_the_earlier(
+    router: ReadOnlyQueryRouter,
+    period: CalendarMonth,
+    comparison_period: CalendarMonth,
+    category: TransactionCategory | None,
+    current_total: str,
+    previous_total: str,
+    difference: str,
+) -> None:
+    repositories = FakeRepositories(
+        BankData(transactions={CUSTOMER_ID: FALLING_EXPENSES})
+    )
+    interpretation = Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        category=category,
+        period=period,
+        comparison_period=comparison_period,
+    )
+
+    result = route(router, repositories, interpretation)
+
+    assert isinstance(result, ExpenseComparisonResult)
+    assert result.comparison.current.period == OCTOBER
+    assert result.comparison.previous.period == SEPTEMBER
+    assert result.comparison.current.category is category
+    [ars_comparison] = result.comparison.currencies
+    assert ars_comparison.current_total == ars(current_total)
+    assert ars_comparison.previous_total == ars(previous_total)
+    assert ars_comparison.difference == ars(difference)
+    assert ars_comparison.change is ExpenseChange.DECREASE
+
+
+def test_prepare_orders_explicit_months_chronologically(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    query = router.prepare(
+        Interpretation(
+            intent=Intent.COMPARE_EXPENSES,
+            period=CalendarMonth(9),
+            comparison_period=CalendarMonth(10),
+        ),
+        NOW,
+    )
+
+    assert query == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=CalendarMonth(10, 2026),
+        comparison_period=CalendarMonth(9, 2026),
+    )
+
+
+@pytest.mark.parametrize(
+    ("period", "comparison_period"),
+    [
+        (PeriodReference.PREVIOUS_WEEK, PeriodReference.CURRENT_WEEK),
+        (PeriodReference.YESTERDAY, PeriodReference.TODAY),
+    ],
+)
+def test_relative_periods_named_in_reverse_are_ordered_too(
+    router: ReadOnlyQueryRouter,
+    period: PeriodReference,
+    comparison_period: PeriodReference,
+) -> None:
+    query = router.prepare(
+        Interpretation(
+            intent=Intent.COMPARE_EXPENSES,
+            period=period,
+            comparison_period=comparison_period,
+        ),
+        NOW,
+    )
+
+    assert query == Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=comparison_period,
+        comparison_period=period,
+    )
+
+
+def test_overlapping_periods_keep_their_stated_order(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    # The current week ends after October does, but overlaps it: neither is
+    # the later period, so the user's order stands.
+    interpretation = Interpretation(
+        intent=Intent.COMPARE_EXPENSES,
+        period=CalendarMonth(10, 2026),
+        comparison_period=PeriodReference.CURRENT_WEEK,
+    )
+
+    assert router.prepare(interpretation, NOW) == interpretation
+
+
+def test_follow_up_refines_category_and_keeps_ordered_periods(
+    router: ReadOnlyQueryRouter,
+) -> None:
+    repositories = FakeRepositories(
+        BankData(transactions={CUSTOMER_ID: FALLING_EXPENSES})
+    )
+    first = router.prepare(
+        Interpretation(
+            intent=Intent.COMPARE_EXPENSES,
+            period=CalendarMonth(9),
+            comparison_period=CalendarMonth(10),
+        ),
+        NOW,
+    )
+    assert isinstance(first, Interpretation)
+    last = ConversationContext.after_query(first, NOW)
+
+    resolved = router.resolve_follow_up(
+        FollowUp(category=TransactionCategory.GROCERIES), last, NOW
+    )
+    assert isinstance(resolved, Interpretation)
+    query = router.prepare(resolved, NOW)
+    assert isinstance(query, Interpretation)
+    result = router.execute(repositories, CUSTOMER_ID, query, NOW)
+
+    assert query.period == CalendarMonth(10, 2026)
+    assert query.comparison_period == CalendarMonth(9, 2026)
+    assert isinstance(result, ExpenseComparisonResult)
+    assert result.comparison.current.period == OCTOBER
+    assert result.comparison.previous.period == SEPTEMBER
+    assert result.comparison.current.category is TransactionCategory.GROCERIES
+    [ars_comparison] = result.comparison.currencies
+    assert ars_comparison.difference == ars("31339.25")
+    assert ars_comparison.change is ExpenseChange.DECREASE
 
 
 @pytest.mark.parametrize(
@@ -859,11 +1017,12 @@ def test_prepare_anchors_calendar_months_to_a_year(
         NOW,
     )
 
-    assert query == Interpretation(
-        intent=Intent.COMPARE_EXPENSES,
-        period=anchored,
-        comparison_period=CalendarMonth(1, 2026),
-    )
+    # Anchoring only; the months may then be put in chronological order.
+    assert isinstance(query, Interpretation)
+    assert {query.period, query.comparison_period} == {
+        anchored,
+        CalendarMonth(1, 2026),
+    }
 
 
 def test_prepare_derives_previous_month_after_anchoring(

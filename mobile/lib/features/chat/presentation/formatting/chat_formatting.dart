@@ -85,6 +85,46 @@ String periodLabel(ExpensePeriod period) {
   return '${day(from)} – ${day(to)} ${month(to)} ${to.year}';
 }
 
+const _monthNames = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+];
+
+/// Labels for two compared periods, in the order given.
+///
+/// A whole calendar month reads as its name, e.g. `Octubre`, with its year
+/// when the two periods fall in different years; any other period uses
+/// [periodLabel].
+(String, String) comparisonPeriodLabels(
+  ExpensePeriod current,
+  ExpensePeriod previous,
+) {
+  final withYear = current.from.year != previous.from.year;
+  String label(ExpensePeriod period) {
+    final ExpensePeriod(:from, :to) = period;
+    final isWholeMonth =
+        from.day == 1 &&
+        to.year == from.year &&
+        to.month == from.month &&
+        to.add(const Duration(days: 1)).month != to.month;
+    if (!isWholeMonth) return periodLabel(period);
+    final name = _monthNames[from.month - 1];
+    return withYear ? '$name ${from.year}' : name;
+  }
+
+  return (label(current), label(previous));
+}
+
 /// E.g. `Visa Débito •••• 4821`.
 String cardLabel(BankCard card) =>
     '${cardBrandLabel(card.brand)} ${cardTypeLabel(card.type)} '

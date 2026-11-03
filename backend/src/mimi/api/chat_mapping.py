@@ -176,6 +176,9 @@ def _present(result: TurnResult, timezone: ZoneInfo) -> tuple[str, UiResponse]:
             return _expense_summary(analysis), ExpenseSummaryUi(data=data)
         case ExpenseComparisonResult(comparison=comparison):
             comparison_data = ExpenseComparisonUiData(
+                # The filter the comparison was computed with; both periods
+                # share it.
+                category=comparison.current.category,
                 current_period=_period(comparison.current.period, timezone),
                 previous_period=_period(comparison.previous.period, timezone),
                 currencies=[

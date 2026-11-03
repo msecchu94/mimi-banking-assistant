@@ -776,8 +776,12 @@ converted. A currency without expenses in one period counts as zero there.
 `difference` is the non-negative magnitude of current minus previous, and
 `change` carries its direction: `INCREASE`, `DECREASE` or `UNCHANGED`.
 Flutter must not infer the direction from amounts. `current_period` is the
-period of interest and `previous_period` the one it is compared against; it
-is not necessarily earlier.
+period of interest and `previous_period` the one it is compared against. Of
+two disjoint periods, `current_period` is always the later one, whatever
+order the user named them in; overlapping periods keep the stated order.
+
+`category` is the category both periods were filtered by, or `null` when
+all expenses are compared. It is always present.
 
 Example:
 
@@ -789,6 +793,7 @@ Example:
   "ui": {
     "type": "EXPENSE_COMPARISON",
     "data": {
+      "category": null,
       "current_period": {
         "from": "2026-10-01",
         "to": "2026-10-31"

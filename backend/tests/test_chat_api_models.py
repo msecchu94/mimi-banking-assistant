@@ -234,6 +234,7 @@ UI_EXAMPLES: dict[str, dict[str, Any]] = {
         ],
     },
     "EXPENSE_COMPARISON": {
+        "category": None,
         "current_period": {"from": "2026-10-01", "to": "2026-10-31"},
         "previous_period": {"from": "2026-09-01", "to": "2026-09-30"},
         "currencies": [
@@ -298,6 +299,13 @@ def test_contract_responses_round_trip_unchanged(ui_type: str) -> None:
 
     assert parsed.ui.type == ui_type
     assert parsed.model_dump(mode="json") == body
+
+
+def test_category_filtered_comparison_round_trips_its_category() -> None:
+    data = {**UI_EXAMPLES["EXPENSE_COMPARISON"], "category": "GROCERIES"}
+    body = response("EXPENSE_COMPARISON", data)
+
+    assert ChatResponse.model_validate(body).model_dump(mode="json") == body
 
 
 def test_card_confirmation_summary_carries_the_card() -> None:
@@ -375,6 +383,18 @@ def test_confirmation_summary_must_match_its_type(summary: dict[str, Any]) -> No
                 ],
             },
         ),
+        (
+            "EXPENSE_COMPARISON",
+            {
+                key: value
+                for key, value in UI_EXAMPLES["EXPENSE_COMPARISON"].items()
+                if key != "category"
+            },
+        ),
+        (
+            "EXPENSE_COMPARISON",
+            {**UI_EXAMPLES["EXPENSE_COMPARISON"], "category": "PETS"},
+        ),
     ],
     ids=[
         "text_with_cards",
@@ -384,6 +404,8 @@ def test_confirmation_summary_must_match_its_type(summary: dict[str, Any]) -> No
         "combined_expense_total",
         "negative_difference",
         "unknown_change",
+        "comparison_without_category",
+        "comparison_with_unknown_category",
     ],
 )
 def test_ui_data_must_match_its_type(ui_type: str, data: dict[str, Any]) -> None:

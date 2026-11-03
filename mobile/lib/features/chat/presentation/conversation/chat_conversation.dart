@@ -13,6 +13,7 @@ import 'message_bubble.dart';
 import 'replies/card_list_view.dart';
 import 'replies/card_selector_view.dart';
 import 'replies/confirmation_view.dart';
+import 'replies/expense_comparison_view.dart';
 import 'replies/expense_summary_view.dart';
 import 'replies/transaction_list_view.dart';
 
@@ -100,6 +101,7 @@ class _AssistantReply extends StatelessWidget {
     // only.
     final structured = switch (reply.ui) {
       final ExpenseSummaryUi ui => ExpenseSummaryView(ui: ui),
+      final ExpenseComparisonUi ui => ExpenseComparisonView(ui: ui),
       final CardListUi ui => CardListView(ui: ui),
       final TransactionListUi ui => TransactionListView(ui: ui),
       final ConfirmationUi ui => ConfirmationView(

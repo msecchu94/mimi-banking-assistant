@@ -83,7 +83,8 @@ class ReadOnlyQueryRouter:
     query with no period, category or type returns only the
     ``RECENT_TRANSACTIONS_LIMIT`` most recent ones. A calendar month
     without a year is anchored to its latest occurrence not after the current
-    month before anything else uses it.
+    month before anything else uses it. Of two disjoint compared periods, the
+    later one is always the period of interest.
     """
 
     def __init__(self, timezone: ZoneInfo) -> None:
@@ -133,7 +134,10 @@ class ReadOnlyQueryRouter:
             case Intent.ANALYZE_EXPENSES if interpretation.period is None:
                 return replace(interpretation, period=PeriodReference.CURRENT_MONTH)
             case Intent.COMPARE_EXPENSES:
-                return _prepare_comparison(interpretation)
+                prepared = _prepare_comparison(interpretation)
+                if isinstance(prepared, Interpretation):
+                    return self._chronological(prepared, now)
+                return prepared
         return interpretation
 
     def resolve_follow_up(
@@ -266,6 +270,24 @@ class ReadOnlyQueryRouter:
                 )
                 return BeneficiariesResult(tuple(beneficiaries))
         raise AssertionError(f"unrouted read-only intent {intent}")
+
+    def _chronological(
+        self, comparison: Interpretation, now: datetime
+    ) -> Interpretation:
+        """Order a complete comparison so that, of two disjoint periods, the
+        later one is evaluated against the earlier one, whatever order the
+        user named them in. Overlapping periods keep their stated order."""
+        if comparison.period is None or comparison.comparison_period is None:
+            raise AssertionError("expense comparison is not prepared")
+        current = self._resolve(comparison.period, now)
+        previous = self._resolve(comparison.comparison_period, now)
+        if current.end > previous.start:
+            return comparison
+        return replace(
+            comparison,
+            period=comparison.comparison_period,
+            comparison_period=comparison.period,
+        )
 
     def _resolve(self, reference: TemporalReference, now: datetime) -> Period:
         return resolve_period(reference, now, self._timezone)

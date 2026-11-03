@@ -13,6 +13,7 @@ import 'package:mimi/features/chat/domain/models/conversation.dart';
 import 'package:mimi/features/chat/domain/models/money.dart';
 import 'package:mimi/features/chat/domain/repositories/chat_repository.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/card_list_view.dart';
+import 'package:mimi/features/chat/presentation/conversation/replies/expense_comparison_view.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/transaction_list_view.dart';
 import 'package:mimi/features/chat/presentation/mimi_sheet/mimi_sheet.dart';
 import 'package:mimi/features/home/presentation/home_page.dart';
@@ -656,6 +657,185 @@ void main() {
       expect(find.byType(TextField).hitTestable(), findsOneWidget);
       expect(find.text(r'+ $ 1.150.000,00'), findsNWidgets(5));
       expect(find.text(r'− $ 1.150.000,00'), findsNWidgets(5));
+    });
+  });
+
+  group('expense comparison', () {
+    final october = ExpensePeriod(
+      from: DateTime.utc(2026, 10),
+      to: DateTime.utc(2026, 10, 31),
+    );
+    final september = ExpensePeriod(
+      from: DateTime.utc(2026, 9),
+      to: DateTime.utc(2026, 9, 30),
+    );
+
+    CurrencyComparison comparison(
+      String current,
+      String previous,
+      String difference,
+      ExpenseChange change, {
+      Currency currency = Currency.ars,
+    }) => CurrencyComparison(
+      currentTotal: Money(amount: current, currency: currency),
+      previousTotal: Money(amount: previous, currency: currency),
+      difference: Money(amount: difference, currency: currency),
+      change: change,
+    );
+
+    Future<_ScriptedRepository> showComparison(
+      WidgetTester tester,
+      List<CurrencyComparison> currencies, {
+      TransactionCategory? category,
+      Size size = _common,
+    }) async {
+      final repository = _ScriptedRepository()
+        ..replies.add(
+          Right(
+            _reply(
+              'Respecto del período comparado, gastaste menos.',
+              ChatUi.expenseComparison(
+                category: category,
+                currentPeriod: october,
+                previousPeriod: september,
+                currencies: currencies,
+              ),
+            ),
+          ),
+        );
+      await _pumpHome(tester, repository, size: size);
+      await _openMimi(tester);
+      await _send(tester, 'Compará mis gastos de octubre con septiembre');
+      return repository;
+    }
+
+    testWidgets('shows a general comparison as the backend sent it', (
+      tester,
+    ) async {
+      await showComparison(tester, [
+        comparison(
+          '838399.00',
+          '930738.25',
+          '92339.25',
+          ExpenseChange.decrease,
+        ),
+      ]);
+
+      expect(
+        find.text('Respecto del período comparado, gastaste menos.'),
+        findsOneWidget,
+      );
+      expect(find.text('Comparación de gastos'), findsOneWidget);
+      expect(find.text('Octubre'), findsOneWidget);
+      expect(find.text('Septiembre'), findsOneWidget);
+      expect(find.text(r'$ 838.399,00'), findsOneWidget);
+      expect(find.text(r'$ 930.738,25'), findsOneWidget);
+      expect(find.text(r'$ 92.339,25 menos'), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward), findsOneWidget);
+      expect(find.textContaining('%'), findsNothing);
+    });
+
+    testWidgets('names the category it was filtered by', (tester) async {
+      await showComparison(tester, [
+        comparison(
+          '291912.00',
+          '323251.25',
+          '31339.25',
+          ExpenseChange.decrease,
+        ),
+      ], category: TransactionCategory.groceries);
+
+      expect(find.text('Gastos en Supermercado'), findsOneWidget);
+      expect(find.text('Comparación de gastos'), findsNothing);
+      expect(find.text(r'$ 31.339,25 menos'), findsOneWidget);
+    });
+
+    testWidgets('an increase reads as more, in the attention color', (
+      tester,
+    ) async {
+      await showComparison(tester, [
+        comparison(
+          '185000.00',
+          '160000.00',
+          '25000.00',
+          ExpenseChange.increase,
+        ),
+      ]);
+
+      final change = tester.widget<Text>(find.text(r'$ 25.000,00 más'));
+      expect(change.style?.color, MimiColors.warning);
+      expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
+    });
+
+    testWidgets('no change reads as such, neutrally', (tester) async {
+      await showComparison(tester, [
+        comparison('0.00', '0.00', '0.00', ExpenseChange.unchanged),
+      ]);
+
+      final change = tester.widget<Text>(find.text('Sin cambios'));
+      expect(change.style?.color, MimiColors.textSecondary);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('uses the backend direction, not the amounts', (tester) async {
+      await showComparison(tester, [
+        // Inconsistent on purpose: the direction must come from `change`.
+        comparison('100.00', '200.00', '100.00', ExpenseChange.increase),
+      ]);
+
+      expect(find.text(r'$ 100,00 más'), findsOneWidget);
+    });
+
+    testWidgets('compares each currency on its own', (tester) async {
+      await showComparison(tester, [
+        comparison(
+          '185000.00',
+          '160000.00',
+          '25000.00',
+          ExpenseChange.increase,
+        ),
+        comparison(
+          '80.00',
+          '120.00',
+          '40.00',
+          ExpenseChange.decrease,
+          currency: Currency.usd,
+        ),
+      ], size: _narrow);
+
+      expect(tester.takeException(), isNull);
+      expect(find.text(r'$ 25.000,00 más'), findsOneWidget);
+      expect(find.text(r'US$ 80,00'), findsOneWidget);
+      expect(find.text(r'US$ 120,00'), findsOneWidget);
+      expect(find.text(r'US$ 40,00 menos'), findsOneWidget);
+      expect(find.text('Octubre'), findsNWidgets(2));
+    });
+
+    testWidgets('is display only', (tester) async {
+      final repository = await showComparison(tester, [
+        comparison(
+          '838399.00',
+          '930738.25',
+          '92339.25',
+          ExpenseChange.decrease,
+        ),
+      ]);
+      final callsBefore = repository.calls.length;
+
+      await tester.tap(find.text('Octubre'));
+      await tester.pumpAndSettle();
+
+      expect(repository.calls, hasLength(callsBefore));
+      final controls = find.descendant(
+        of: find.byType(ExpenseComparisonView),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is InkResponse ||
+              widget is MimiButton ||
+              (widget is GestureDetector && widget.onTap != null),
+        ),
+      );
+      expect(controls, findsNothing);
     });
   });
 

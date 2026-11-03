@@ -468,6 +468,7 @@ PRESENTATIONS = [
         {
             "type": "EXPENSE_COMPARISON",
             "data": {
+                "category": None,
                 "current_period": {"from": "2026-10-01", "to": "2026-10-31"},
                 "previous_period": {"from": "2026-09-01", "to": "2026-09-30"},
                 "currencies": [
@@ -481,6 +482,43 @@ PRESENTATIONS = [
                         "current_total": {"amount": "80.00", "currency": "USD"},
                         "previous_total": {"amount": "120.00", "currency": "USD"},
                         "difference": {"amount": "40.00", "currency": "USD"},
+                        "change": "DECREASE",
+                    },
+                ],
+            },
+        },
+    ),
+    (
+        "expense_comparison_by_category",
+        ExpenseComparisonResult(
+            ExpenseComparison(
+                ExpenseAnalysis(OCTOBER, TransactionCategory.GROCERIES, ()),
+                ExpenseAnalysis(SEPTEMBER, TransactionCategory.GROCERIES, ()),
+                (
+                    CurrencyComparison(
+                        Currency.ARS,
+                        Money(Decimal("291912.00"), Currency.ARS),
+                        Money(Decimal("323251.25"), Currency.ARS),
+                        Money(Decimal("31339.25"), Currency.ARS),
+                        ExpenseChange.DECREASE,
+                    ),
+                ),
+            )
+        ),
+        Intent.COMPARE_EXPENSES,
+        ConversationFlowState.READY,
+        "Respecto del período comparado, en ARS gastaste 31339.25 ARS menos.",
+        {
+            "type": "EXPENSE_COMPARISON",
+            "data": {
+                "category": "GROCERIES",
+                "current_period": {"from": "2026-10-01", "to": "2026-10-31"},
+                "previous_period": {"from": "2026-09-01", "to": "2026-09-30"},
+                "currencies": [
+                    {
+                        "current_total": ars("291912.00"),
+                        "previous_total": ars("323251.25"),
+                        "difference": ars("31339.25"),
                         "change": "DECREASE",
                     },
                 ],

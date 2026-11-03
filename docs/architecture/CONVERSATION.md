@@ -480,6 +480,10 @@ When the user omits a period:
 
 Defaults apply only to omitted periods, never to unsupported ones.
 
+Of two disjoint compared periods, the later one is always the period of
+interest and the earlier one its baseline, whatever order the user named
+them in. Overlapping periods keep the stated order.
+
 ---
 
 ## 9. State-Changing Operation Flow

@@ -122,6 +122,41 @@ void main() {
     expect(shortDateLabel(DateTime.utc(2026, 1, 5, 12)), '5 ene');
   });
 
+  group('comparisonPeriodLabels', () {
+    ExpensePeriod days(DateTime from, DateTime to) =>
+        ExpensePeriod(from: from, to: to);
+
+    test('names whole calendar months, in the given order', () {
+      expect(
+        comparisonPeriodLabels(
+          days(DateTime.utc(2026, 9), DateTime.utc(2026, 9, 30)),
+          days(DateTime.utc(2026, 10), DateTime.utc(2026, 10, 31)),
+        ),
+        ('Septiembre', 'Octubre'),
+      );
+    });
+
+    test('adds the year when the months fall in different years', () {
+      expect(
+        comparisonPeriodLabels(
+          days(DateTime.utc(2026, 1), DateTime.utc(2026, 1, 31)),
+          days(DateTime.utc(2025, 12), DateTime.utc(2025, 12, 31)),
+        ),
+        ('Enero 2026', 'Diciembre 2025'),
+      );
+    });
+
+    test('keeps day ranges for anything but a whole month', () {
+      expect(
+        comparisonPeriodLabels(
+          days(DateTime.utc(2026, 10, 26), DateTime.utc(2026, 11, 1)),
+          days(DateTime.utc(2026, 10), DateTime.utc(2026, 10, 30)),
+        ),
+        ('26 oct – 1 nov 2026', '1 – 30 oct 2026'),
+      );
+    });
+  });
+
   test('card brand, type and status read in Spanish', () {
     expect(cardBrandLabel(CardBrand.visa), 'Visa');
     expect(cardBrandLabel(CardBrand.mastercard), 'Mastercard');

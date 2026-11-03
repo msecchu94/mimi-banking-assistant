@@ -3023,7 +3023,8 @@ $ExpensePeriodDtoCopyWith<$Res> get period {
 /// @nodoc
 mixin _$ExpenseComparisonDataDto {
 
- ExpensePeriodDto get currentPeriod; ExpensePeriodDto get previousPeriod; List<CurrencyComparisonDto> get currencies;
+/// The category both periods were filtered by; null for all expenses.
+ String? get category; ExpensePeriodDto get currentPeriod; ExpensePeriodDto get previousPeriod; List<CurrencyComparisonDto> get currencies;
 /// Create a copy of ExpenseComparisonDataDto
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -3037,20 +3038,20 @@ $ExpenseComparisonDataDtoCopyWith<ExpenseComparisonDataDto> get copyWith => _$Ex
 @override
 bool operator ==(Object other) {
   final _this = this as ExpenseComparisonDataDto;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is ExpenseComparisonDataDto&&(identical(other.currentPeriod, _this.currentPeriod) || other.currentPeriod == _this.currentPeriod)&&(identical(other.previousPeriod, _this.previousPeriod) || other.previousPeriod == _this.previousPeriod)&&const DeepCollectionEquality().equals(other.currencies, _this.currencies));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is ExpenseComparisonDataDto&&(identical(other.category, _this.category) || other.category == _this.category)&&(identical(other.currentPeriod, _this.currentPeriod) || other.currentPeriod == _this.currentPeriod)&&(identical(other.previousPeriod, _this.previousPeriod) || other.previousPeriod == _this.previousPeriod)&&const DeepCollectionEquality().equals(other.currencies, _this.currencies));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as ExpenseComparisonDataDto;
-  return Object.hash(runtimeType,_this.currentPeriod,_this.previousPeriod,const DeepCollectionEquality().hash(_this.currencies));
+  return Object.hash(runtimeType,_this.category,_this.currentPeriod,_this.previousPeriod,const DeepCollectionEquality().hash(_this.currencies));
 }
 
 @override
 String toString() {
   final _this = this as ExpenseComparisonDataDto;
-  return 'ExpenseComparisonDataDto(currentPeriod: ${_this.currentPeriod}, previousPeriod: ${_this.previousPeriod}, currencies: ${_this.currencies})';
+  return 'ExpenseComparisonDataDto(category: ${_this.category}, currentPeriod: ${_this.currentPeriod}, previousPeriod: ${_this.previousPeriod}, currencies: ${_this.currencies})';
 }
 
 
@@ -3061,7 +3062,7 @@ abstract mixin class $ExpenseComparisonDataDtoCopyWith<$Res>  {
   factory $ExpenseComparisonDataDtoCopyWith(ExpenseComparisonDataDto value, $Res Function(ExpenseComparisonDataDto) _then) = _$ExpenseComparisonDataDtoCopyWithImpl;
 @useResult
 $Res call({
- ExpensePeriodDto currentPeriod, ExpensePeriodDto previousPeriod, List<CurrencyComparisonDto> currencies
+ String? category, ExpensePeriodDto currentPeriod, ExpensePeriodDto previousPeriod, List<CurrencyComparisonDto> currencies
 });
 
 
@@ -3078,9 +3079,10 @@ class _$ExpenseComparisonDataDtoCopyWithImpl<$Res>
 
 /// Create a copy of ExpenseComparisonDataDto
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? currentPeriod = null,Object? previousPeriod = null,Object? currencies = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? category = freezed,Object? currentPeriod = null,Object? previousPeriod = null,Object? currencies = null,}) {
   return _then(ExpenseComparisonDataDto(
-currentPeriod: null == currentPeriod ? _self.currentPeriod : currentPeriod // ignore: cast_nullable_to_non_nullable
+category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as String?,currentPeriod: null == currentPeriod ? _self.currentPeriod : currentPeriod // ignore: cast_nullable_to_non_nullable
 as ExpensePeriodDto,previousPeriod: null == previousPeriod ? _self.previousPeriod : previousPeriod // ignore: cast_nullable_to_non_nullable
 as ExpensePeriodDto,currencies: null == currencies ? _self.currencies : currencies // ignore: cast_nullable_to_non_nullable
 as List<CurrencyComparisonDto>,
@@ -3186,10 +3188,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( ExpensePeriodDto currentPeriod,  ExpensePeriodDto previousPeriod,  List<CurrencyComparisonDto> currencies)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String? category,  ExpensePeriodDto currentPeriod,  ExpensePeriodDto previousPeriod,  List<CurrencyComparisonDto> currencies)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _ExpenseComparisonDataDto() when $default != null:
-return $default(_that.currentPeriod,_that.previousPeriod,_that.currencies);case _:
+return $default(_that.category,_that.currentPeriod,_that.previousPeriod,_that.currencies);case _:
   return orElse();
 
 }
@@ -3207,10 +3209,10 @@ return $default(_that.currentPeriod,_that.previousPeriod,_that.currencies);case 
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( ExpensePeriodDto currentPeriod,  ExpensePeriodDto previousPeriod,  List<CurrencyComparisonDto> currencies)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String? category,  ExpensePeriodDto currentPeriod,  ExpensePeriodDto previousPeriod,  List<CurrencyComparisonDto> currencies)  $default,) {final _that = this;
 switch (_that) {
 case _ExpenseComparisonDataDto():
-return $default(_that.currentPeriod,_that.previousPeriod,_that.currencies);case _:
+return $default(_that.category,_that.currentPeriod,_that.previousPeriod,_that.currencies);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -3227,10 +3229,10 @@ return $default(_that.currentPeriod,_that.previousPeriod,_that.currencies);case 
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( ExpensePeriodDto currentPeriod,  ExpensePeriodDto previousPeriod,  List<CurrencyComparisonDto> currencies)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String? category,  ExpensePeriodDto currentPeriod,  ExpensePeriodDto previousPeriod,  List<CurrencyComparisonDto> currencies)?  $default,) {final _that = this;
 switch (_that) {
 case _ExpenseComparisonDataDto() when $default != null:
-return $default(_that.currentPeriod,_that.previousPeriod,_that.currencies);case _:
+return $default(_that.category,_that.currentPeriod,_that.previousPeriod,_that.currencies);case _:
   return null;
 
 }
@@ -3242,9 +3244,11 @@ return $default(_that.currentPeriod,_that.previousPeriod,_that.currencies);case 
 @JsonSerializable()
 
 class _ExpenseComparisonDataDto implements ExpenseComparisonDataDto {
-  const _ExpenseComparisonDataDto({required this.currentPeriod, required this.previousPeriod, required  List<CurrencyComparisonDto> currencies}): _currencies = currencies;
+  const _ExpenseComparisonDataDto({required this.category, required this.currentPeriod, required this.previousPeriod, required  List<CurrencyComparisonDto> currencies}): _currencies = currencies;
   factory _ExpenseComparisonDataDto.fromJson(Map<String, dynamic> json) => _$ExpenseComparisonDataDtoFromJson(json);
 
+/// The category both periods were filtered by; null for all expenses.
+@override final  String? category;
 @override final  ExpensePeriodDto currentPeriod;
 @override final  ExpensePeriodDto previousPeriod;
  final  List<CurrencyComparisonDto> _currencies;
@@ -3268,18 +3272,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _ExpenseComparisonDataDto&&(identical(other.currentPeriod, currentPeriod) || other.currentPeriod == currentPeriod)&&(identical(other.previousPeriod, previousPeriod) || other.previousPeriod == previousPeriod)&&const DeepCollectionEquality().equals(other.currencies, _currencies));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _ExpenseComparisonDataDto&&(identical(other.category, category) || other.category == category)&&(identical(other.currentPeriod, currentPeriod) || other.currentPeriod == currentPeriod)&&(identical(other.previousPeriod, previousPeriod) || other.previousPeriod == previousPeriod)&&const DeepCollectionEquality().equals(other.currencies, _currencies));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,currentPeriod,previousPeriod,const DeepCollectionEquality().hash(_currencies));
+    return Object.hash(runtimeType,category,currentPeriod,previousPeriod,const DeepCollectionEquality().hash(_currencies));
 }
 
 @override
 String toString() {
-    return 'ExpenseComparisonDataDto(currentPeriod: $currentPeriod, previousPeriod: $previousPeriod, currencies: $currencies)';
+    return 'ExpenseComparisonDataDto(category: $category, currentPeriod: $currentPeriod, previousPeriod: $previousPeriod, currencies: $currencies)';
 }
 
 
@@ -3290,7 +3294,7 @@ abstract mixin class _$ExpenseComparisonDataDtoCopyWith<$Res> implements $Expens
   factory _$ExpenseComparisonDataDtoCopyWith(_ExpenseComparisonDataDto value, $Res Function(_ExpenseComparisonDataDto) _then) = __$ExpenseComparisonDataDtoCopyWithImpl;
 @override @useResult
 $Res call({
- ExpensePeriodDto currentPeriod, ExpensePeriodDto previousPeriod, List<CurrencyComparisonDto> currencies
+ String? category, ExpensePeriodDto currentPeriod, ExpensePeriodDto previousPeriod, List<CurrencyComparisonDto> currencies
 });
 
 
@@ -3307,9 +3311,10 @@ class __$ExpenseComparisonDataDtoCopyWithImpl<$Res>
 
 /// Create a copy of ExpenseComparisonDataDto
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? currentPeriod = null,Object? previousPeriod = null,Object? currencies = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? category = freezed,Object? currentPeriod = null,Object? previousPeriod = null,Object? currencies = null,}) {
   return _then(_ExpenseComparisonDataDto(
-currentPeriod: null == currentPeriod ? _self.currentPeriod : currentPeriod // ignore: cast_nullable_to_non_nullable
+category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as String?,currentPeriod: null == currentPeriod ? _self.currentPeriod : currentPeriod // ignore: cast_nullable_to_non_nullable
 as ExpensePeriodDto,previousPeriod: null == previousPeriod ? _self.previousPeriod : previousPeriod // ignore: cast_nullable_to_non_nullable
 as ExpensePeriodDto,currencies: null == currencies ? _self._currencies : currencies // ignore: cast_nullable_to_non_nullable
 as List<CurrencyComparisonDto>,

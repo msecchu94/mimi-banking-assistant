@@ -132,6 +132,8 @@ abstract class ExpenseSummaryDataDto with _$ExpenseSummaryDataDto {
 @freezed
 abstract class ExpenseComparisonDataDto with _$ExpenseComparisonDataDto {
   const factory ExpenseComparisonDataDto({
+    /// The category both periods were filtered by; null for all expenses.
+    required String? category,
     required ExpensePeriodDto currentPeriod,
     required ExpensePeriodDto previousPeriod,
     required List<CurrencyComparisonDto> currencies,
