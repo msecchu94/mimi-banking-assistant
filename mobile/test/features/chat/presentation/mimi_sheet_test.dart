@@ -12,8 +12,10 @@ import 'package:mimi/features/chat/domain/models/chat_ui.dart';
 import 'package:mimi/features/chat/domain/models/conversation.dart';
 import 'package:mimi/features/chat/domain/models/money.dart';
 import 'package:mimi/features/chat/domain/repositories/chat_repository.dart';
+import 'package:mimi/features/chat/presentation/conversation/replies/card_list_view.dart';
 import 'package:mimi/features/chat/presentation/mimi_sheet/mimi_sheet.dart';
 import 'package:mimi/features/home/presentation/home_page.dart';
+import 'package:mimi/shared/design_system/components/mimi_button.dart';
 
 import '../../../helpers/inter_font.dart';
 
@@ -416,22 +418,134 @@ void main() {
     expect(repository.count('selectCard'), 1, reason: 'now history');
   });
 
-  testWidgets('other UI types show the backend message only in FL-05B', (
-    tester,
-  ) async {
+  group('card list', () {
+    const cards = [
+      BankCard(
+        id: 'fd4c104d-ea5b-5f30-b9ea-e784c041859d',
+        brand: CardBrand.mastercard,
+        type: CardType.credit,
+        lastFour: '5307',
+        status: CardStatus.active,
+      ),
+      _card,
+      BankCard(
+        id: '450bd714-6c8f-50c8-9693-70b1a2e3e1a3',
+        brand: CardBrand.visa,
+        type: CardType.credit,
+        lastFour: '9134',
+        status: CardStatus.frozen,
+      ),
+    ];
+
+    Future<_ScriptedRepository> showCards(
+      WidgetTester tester,
+      List<BankCard> cards, {
+      Size size = _common,
+    }) async {
+      final repository = _ScriptedRepository()
+        ..replies.add(
+          Right(
+            _reply('Encontré tus tarjetas.', ChatUi.cardList(cards: cards)),
+          ),
+        );
+      await _pumpHome(tester, repository, size: size);
+      await _openMimi(tester);
+      await _send(tester, 'Mostrame mis tarjetas');
+      return repository;
+    }
+
+    testWidgets('shows each card from the backend under its message', (
+      tester,
+    ) async {
+      await showCards(tester, cards);
+
+      expect(find.text('Encontré tus tarjetas.'), findsOneWidget);
+      expect(find.text('Mastercard'), findsOneWidget);
+      expect(find.text('Visa'), findsNWidgets(2));
+      expect(find.text('Crédito'), findsNWidgets(2));
+      expect(find.text('Débito'), findsOneWidget);
+      for (final lastFour in ['5307', '4821', '9134']) {
+        expect(find.text('•••• $lastFour'), findsOneWidget);
+      }
+      expect(find.text('Activa'), findsNWidgets(2));
+      expect(find.text('Congelada'), findsOneWidget);
+      expect(find.byIcon(Icons.ac_unit), findsOneWidget);
+      for (final card in cards) {
+        expect(find.textContaining(card.id), findsNothing);
+      }
+    });
+
+    testWidgets('is display only', (tester) async {
+      final repository = await showCards(tester, cards);
+      final callsBefore = repository.calls.length;
+
+      for (final label in ['Mastercard', '•••• 4821']) {
+        await tester.tap(find.text(label));
+        await tester.pumpAndSettle();
+      }
+
+      expect(repository.calls, hasLength(callsBefore));
+      expect(find.text('Visa Débito •••• 4821'), findsNothing);
+      final controls = find.descendant(
+        of: find.byType(CardListView),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is InkResponse ||
+              widget is MimiButton ||
+              (widget is GestureDetector && widget.onTap != null),
+        ),
+      );
+      expect(controls, findsNothing);
+    });
+
+    testWidgets('scrolls horizontally to cards beyond a narrow screen', (
+      tester,
+    ) async {
+      await showCards(tester, cards, size: _narrow);
+      expect(tester.takeException(), isNull);
+      expect(find.text('•••• 9134').hitTestable(), findsNothing);
+
+      await tester.drag(find.text('•••• 5307'), const Offset(-400, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('•••• 9134').hitTestable(), findsOneWidget);
+    });
+
+    testWidgets('lays out a single card at 320 px', (tester) async {
+      await showCards(tester, const [_card], size: _narrow);
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('•••• 4821').hitTestable(), findsOneWidget);
+      expect(find.text('Activa').hitTestable(), findsOneWidget);
+    });
+  });
+
+  testWidgets('other UI types show the backend message only', (tester) async {
     final repository = _ScriptedRepository()
       ..replies.add(
         Right(
-          _reply('Tenés una tarjeta.', const ChatUi.cardList(cards: [_card])),
+          _reply(
+            'Encontré un destinatario.',
+            const ChatUi.beneficiaryList(
+              beneficiaries: [
+                Beneficiary(
+                  id: 'b-1',
+                  name: 'Laura Gómez',
+                  accountReference: '****4582',
+                  bankName: null,
+                ),
+              ],
+            ),
+          ),
         ),
       );
     await _pumpHome(tester, repository);
     await _openMimi(tester);
 
-    await _send(tester, '¿Qué tarjetas tengo?');
+    await _send(tester, '¿A quién puedo transferir?');
 
-    expect(find.text('Tenés una tarjeta.'), findsOneWidget);
-    expect(find.text('Visa Débito •••• 4821'), findsNothing);
+    expect(find.text('Encontré un destinatario.'), findsOneWidget);
+    expect(find.text('Laura Gómez'), findsNothing);
   });
 
   final layouts = {

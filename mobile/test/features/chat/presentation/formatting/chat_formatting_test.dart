@@ -65,6 +65,15 @@ void main() {
     expect(cardLabel(card), 'Visa Débito •••• 4821');
   });
 
+  test('card brand, type and status read in Spanish', () {
+    expect(cardBrandLabel(CardBrand.visa), 'Visa');
+    expect(cardBrandLabel(CardBrand.mastercard), 'Mastercard');
+    expect(cardTypeLabel(CardType.credit), 'Crédito');
+    expect(cardTypeLabel(CardType.debit), 'Débito');
+    expect(cardStatusLabel(CardStatus.active), 'Activa');
+    expect(cardStatusLabel(CardStatus.frozen), 'Congelada');
+  });
+
   group('failure messages', () {
     test('only an unavailable conversation ends it', () {
       for (final code in BackendErrorCode.values) {

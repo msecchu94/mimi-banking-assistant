@@ -68,17 +68,19 @@ String periodLabel(ExpensePeriod period) {
 }
 
 /// E.g. `Visa Débito •••• 4821`.
-String cardLabel(BankCard card) {
-  final brand = switch (card.brand) {
-    CardBrand.visa => 'Visa',
-    CardBrand.mastercard => 'Mastercard',
-  };
-  final type = switch (card.type) {
-    CardType.debit => 'Débito',
-    CardType.credit => 'Crédito',
-  };
-  return '$brand $type •••• ${card.lastFour}';
-}
+String cardLabel(BankCard card) =>
+    '${cardBrandLabel(card.brand)} ${cardTypeLabel(card.type)} '
+    '•••• ${card.lastFour}';
+
+String cardBrandLabel(CardBrand brand) => switch (brand) {
+  CardBrand.visa => 'Visa',
+  CardBrand.mastercard => 'Mastercard',
+};
+
+String cardTypeLabel(CardType type) => switch (type) {
+  CardType.debit => 'Débito',
+  CardType.credit => 'Crédito',
+};
 
 String cardStatusLabel(CardStatus status) => switch (status) {
   CardStatus.active => 'Activa',

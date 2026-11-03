@@ -10,6 +10,7 @@ import '../chat_controller.dart';
 import '../chat_state.dart';
 import '../formatting/failure_message.dart';
 import 'message_bubble.dart';
+import 'replies/card_list_view.dart';
 import 'replies/card_selector_view.dart';
 import 'replies/confirmation_view.dart';
 import 'replies/expense_summary_view.dart';
@@ -94,10 +95,11 @@ class _AssistantReply extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // FL-05B renders these structured types; the others show the backend
-    // message only.
+    // Structured types rendered so far; the others show the backend message
+    // only.
     final structured = switch (reply.ui) {
       final ExpenseSummaryUi ui => ExpenseSummaryView(ui: ui),
+      final CardListUi ui => CardListView(ui: ui),
       final ConfirmationUi ui => ConfirmationView(
         ui: ui,
         actionable: actionable,
