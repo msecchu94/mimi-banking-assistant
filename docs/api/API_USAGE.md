@@ -158,6 +158,7 @@ chat "¿Y comparado con el mes pasado?"
   "ui": {
     "type": "EXPENSE_COMPARISON",
     "data": {
+      "category": "GROCERIES",
       "current_period": { "from": "2026-10-01", "to": "2026-10-31" },
       "previous_period": { "from": "2026-09-01", "to": "2026-09-30" },
       "currencies": [
@@ -173,7 +174,8 @@ chat "¿Y comparado con el mes pasado?"
 }
 ```
 
-Both totals are for groceries only, inherited from the first question. Other
+Both totals are for groceries only, inherited from the first question, as
+`category` states. Other
 follow-ups: `"¿Y el anterior?"`, `"¿Y en restaurantes?"`. Sent in a new
 conversation, the same follow-up gets *"No tengo una consulta anterior a la
 cual referirme."*

@@ -77,7 +77,8 @@ class Interpretation:
     those fields are unset.
 
     For ``COMPARE_EXPENSES``, ``period`` is the period of interest and
-    ``comparison_period`` the one it is compared against.
+    ``comparison_period`` the one it is compared against, as the user named
+    them; the application puts disjoint periods in chronological order.
     """
 
     intent: Intent

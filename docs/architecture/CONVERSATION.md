@@ -475,9 +475,14 @@ When the user omits a period:
   and a calendar month compared against ↔ `CURRENT_MONTH`. If both periods
   are omitted, or the stated period has no pair, the comparison is not
   executed.
-- `GET_TRANSACTIONS` applies no temporal filter and no implicit limit.
+- `GET_TRANSACTIONS` applies no temporal filter. Without a category or
+  transaction type either, it returns only the 10 most recent transactions.
 
 Defaults apply only to omitted periods, never to unsupported ones.
+
+Of two disjoint compared periods, the later one is always the period of
+interest and the earlier one its baseline, whatever order the user named
+them in. Overlapping periods keep the stated order.
 
 ---
 

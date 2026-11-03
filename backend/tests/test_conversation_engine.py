@@ -81,6 +81,7 @@ from mimi.domain.enums import (
     MessageRole,
     PendingOperationType,
     TransactionCategory,
+    TransactionType,
 )
 
 BUENOS_AIRES = timezone(timedelta(hours=-3))
@@ -725,6 +726,61 @@ def test_previous_period_follow_up_continues_expense_analysis(
         last_intent=Intent.ANALYZE_EXPENSES,
         temporal=TemporalContext(PeriodReference.PREVIOUS_MONTH, None, NOW),
     )
+
+
+def test_comparison_named_earlier_first_evaluates_the_later_month(
+    engine: ConversationEngine, scope: FakeTransactionScope, llm: FakeLLMProvider
+) -> None:
+    conversation_id = store_conversation(scope).conversation.id
+    september = {"month": 9, "year": None}
+    october = {"month": 10, "year": None}
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "Necesito comparación de gastos entre septiembre y octubre",
+        # The model keeps the order the user named the months in.
+        model_output(
+            intent="COMPARE_EXPENSES", period=september, comparison_period=october
+        ),
+    )
+
+    assert isinstance(turn.result, ExpenseComparisonResult)
+    assert turn.result.comparison.current.period == OCTOBER
+    assert turn.result.comparison.previous.period == SEPTEMBER
+
+    turn = send(
+        engine,
+        llm,
+        conversation_id,
+        "Ahora solo de supermercado",
+        model_output(intent="FOLLOW_UP", category="GROCERIES"),
+    )
+
+    assert turn.intent is Intent.COMPARE_EXPENSES
+    assert isinstance(turn.result, ExpenseComparisonResult)
+    assert turn.result.comparison.current.period == OCTOBER
+    assert turn.result.comparison.previous.period == SEPTEMBER
+    assert turn.result.comparison.current.category is TransactionCategory.GROCERIES
+    assert scope.repositories.transactions.queries[-2:] == [
+        TransactionQuery(
+            occurred_from=OCTOBER.start,
+            occurred_to=OCTOBER.end,
+            category=TransactionCategory.GROCERIES,
+            type=TransactionType.DEBIT,
+        ),
+        TransactionQuery(
+            occurred_from=SEPTEMBER.start,
+            occurred_to=SEPTEMBER.end,
+            category=TransactionCategory.GROCERIES,
+            type=TransactionType.DEBIT,
+        ),
+    ]
+    temporal = stored_context(scope, conversation_id).temporal
+    assert temporal is not None
+    assert temporal.period == CalendarMonth(10, 2026)
+    assert temporal.comparison_period == CalendarMonth(9, 2026)
 
 
 def test_stated_period_follow_up_continues_transactions(

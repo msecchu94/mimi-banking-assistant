@@ -1,0 +1,259 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mimi/core/error/failure.dart';
+import 'package:mimi/features/chat/domain/models/chat_ui.dart';
+import 'package:mimi/features/chat/domain/models/money.dart';
+import 'package:mimi/features/chat/presentation/formatting/chat_formatting.dart';
+import 'package:mimi/features/chat/presentation/formatting/failure_message.dart';
+
+void main() {
+  group('formatMoney', () {
+    final cases = {
+      ('184320.00', Currency.ars): r'$ 184.320,00',
+      ('1284650.75', Currency.ars): r'$ 1.284.650,75',
+      ('100.00', Currency.ars): r'$ 100,00',
+      ('0.50', Currency.ars): r'$ 0,50',
+      ('-1000.00', Currency.ars): r'−$ 1.000,00',
+      ('25.00', Currency.usd): r'US$ 25,00',
+    };
+    cases.forEach((input, expected) {
+      test('${input.$1} ${input.$2.name} → $expected', () {
+        expect(
+          formatMoney(Money(amount: input.$1, currency: input.$2)),
+          expected,
+        );
+      });
+    });
+  });
+
+  group('periodLabel', () {
+    ExpensePeriod period(DateTime from, DateTime to) =>
+        ExpensePeriod(from: from, to: to);
+
+    test('within one month', () {
+      expect(
+        periodLabel(period(DateTime.utc(2026, 10), DateTime.utc(2026, 10, 31))),
+        '1 – 31 oct 2026',
+      );
+    });
+
+    test('across months', () {
+      expect(
+        periodLabel(
+          period(DateTime.utc(2026, 9, 15), DateTime.utc(2026, 10, 14)),
+        ),
+        '15 sep – 14 oct 2026',
+      );
+    });
+
+    test('across years', () {
+      expect(
+        periodLabel(period(DateTime.utc(2025, 12, 15), DateTime.utc(2026, 1))),
+        '15 dic 2025 – 1 ene 2026',
+      );
+    });
+  });
+
+  test('cardLabel names brand, type and last four digits', () {
+    const card = BankCard(
+      id: 'c-1',
+      brand: CardBrand.visa,
+      type: CardType.debit,
+      lastFour: '4821',
+      status: CardStatus.active,
+    );
+
+    expect(cardLabel(card), 'Visa Débito •••• 4821');
+  });
+
+  test('categories read in Spanish', () {
+    const expected = {
+      TransactionCategory.dining: 'Gastronomía',
+      TransactionCategory.groceries: 'Supermercado',
+      TransactionCategory.transport: 'Transporte',
+      TransactionCategory.fuel: 'Combustible',
+      TransactionCategory.utilities: 'Servicios',
+      TransactionCategory.shopping: 'Compras',
+      TransactionCategory.subscriptions: 'Suscripciones',
+      TransactionCategory.entertainment: 'Entretenimiento',
+      TransactionCategory.transfer: 'Transferencias',
+      TransactionCategory.other: 'Otros',
+    };
+    for (final category in TransactionCategory.values) {
+      expect(categoryLabel(category), expected[category]);
+    }
+  });
+
+  group('transactionAmountLabel', () {
+    Transaction transaction(TransactionType type, Money amount) => Transaction(
+      id: 't-1',
+      description: 'Movimiento',
+      amount: amount,
+      type: type,
+      category: TransactionCategory.other,
+      occurredAt: DateTime.utc(2026, 10, 26, 12),
+    );
+
+    test('a debit is negative and a credit positive, by type', () {
+      final amount = Money(amount: '17650.00', currency: Currency.ars);
+
+      expect(
+        transactionAmountLabel(transaction(TransactionType.debit, amount)),
+        r'− $ 17.650,00',
+      );
+      expect(
+        transactionAmountLabel(transaction(TransactionType.credit, amount)),
+        r'+ $ 17.650,00',
+      );
+    });
+
+    test('keeps the backend currency', () {
+      final amount = Money(amount: '25.00', currency: Currency.usd);
+
+      expect(
+        transactionAmountLabel(transaction(TransactionType.credit, amount)),
+        r'+ US$ 25,00',
+      );
+    });
+  });
+
+  test('shortDateLabel is a compact local day', () {
+    // Midday UTC is the same calendar day in every common timezone.
+    expect(shortDateLabel(DateTime.utc(2026, 10, 26, 12)), '26 oct');
+    expect(shortDateLabel(DateTime.utc(2026, 1, 5, 12)), '5 ene');
+  });
+
+  group('comparisonPeriodLabels', () {
+    ExpensePeriod days(DateTime from, DateTime to) =>
+        ExpensePeriod(from: from, to: to);
+
+    test('names whole calendar months, in the given order', () {
+      expect(
+        comparisonPeriodLabels(
+          days(DateTime.utc(2026, 9), DateTime.utc(2026, 9, 30)),
+          days(DateTime.utc(2026, 10), DateTime.utc(2026, 10, 31)),
+        ),
+        ('Septiembre', 'Octubre'),
+      );
+    });
+
+    test('adds the year when the months fall in different years', () {
+      expect(
+        comparisonPeriodLabels(
+          days(DateTime.utc(2026, 1), DateTime.utc(2026, 1, 31)),
+          days(DateTime.utc(2025, 12), DateTime.utc(2025, 12, 31)),
+        ),
+        ('Enero 2026', 'Diciembre 2025'),
+      );
+    });
+
+    test('keeps day ranges for anything but a whole month', () {
+      expect(
+        comparisonPeriodLabels(
+          days(DateTime.utc(2026, 10, 26), DateTime.utc(2026, 11, 1)),
+          days(DateTime.utc(2026, 10), DateTime.utc(2026, 10, 30)),
+        ),
+        ('26 oct – 1 nov 2026', '1 – 30 oct 2026'),
+      );
+    });
+  });
+
+  test('card brand, type and status read in Spanish', () {
+    expect(cardBrandLabel(CardBrand.visa), 'Visa');
+    expect(cardBrandLabel(CardBrand.mastercard), 'Mastercard');
+    expect(cardTypeLabel(CardType.credit), 'Crédito');
+    expect(cardTypeLabel(CardType.debit), 'Débito');
+    expect(cardStatusLabel(CardStatus.active), 'Activa');
+    expect(cardStatusLabel(CardStatus.frozen), 'Congelada');
+  });
+
+  group('beneficiaryInitials', () {
+    final cases = {
+      'Diego Romero': 'DR',
+      'Lucía Fernández': 'LF',
+      'Martín Pérez': 'MP',
+      '  ana   maría   soto ': 'AS',
+      'Laura': 'L',
+      'Élodie': 'É',
+      '': '?',
+      '   ': '?',
+    };
+    cases.forEach((name, expected) {
+      test('"$name" → $expected', () {
+        expect(beneficiaryInitials(name), expected);
+      });
+    });
+  });
+
+  group('accountReferenceLabel', () {
+    final cases = {
+      '****0044': '•••• 0044',
+      '**12': '•• 12',
+      '****': '••••',
+      'CBU 0044': 'CBU 0044',
+      '0044': '0044',
+    };
+    cases.forEach((reference, expected) {
+      test('$reference → $expected', () {
+        expect(accountReferenceLabel(reference), expected);
+      });
+    });
+  });
+
+  test('dateTimeLabel is a local day and 24 h time', () {
+    expect(dateTimeLabel(DateTime(2026, 11, 3, 19, 58)), '3 nov 2026, 19:58');
+    expect(dateTimeLabel(DateTime(2026, 1, 5, 7, 4)), '5 ene 2026, 07:04');
+  });
+
+  group('shortReferenceLabel', () {
+    test('keeps the start and end of a long reference', () {
+      expect(
+        shortReferenceLabel('bbb202a2-9083-434a-8551-c68d31c3ba39'),
+        'bbb202a2…ba39',
+      );
+    });
+
+    test('leaves a short reference whole', () {
+      expect(shortReferenceLabel('TR-0001'), 'TR-0001');
+      expect(shortReferenceLabel('bbb202a2-ba39'), 'bbb202a2-ba39');
+    });
+  });
+
+  test('transferShareText carries the structured data and full reference', () {
+    final transfer = TransferSummaryUi(
+      transferId: 'bbb202a2-9083-434a-8551-c68d31c3ba39',
+      beneficiary: 'Laura Gómez',
+      amount: Money(amount: '25000.00', currency: Currency.ars),
+      status: TransferStatus.completed,
+      executedAt: DateTime(2026, 11, 3, 19, 58),
+    );
+
+    expect(
+      transferShareText(transfer),
+      'Transferencia realizada\n'
+      'Monto: \$ 25.000,00 ARS\n'
+      'Destinatario: Laura Gómez\n'
+      'Fecha: 3 nov 2026, 19:58\n'
+      'Operación: bbb202a2-9083-434a-8551-c68d31c3ba39',
+    );
+  });
+
+  group('failure messages', () {
+    test('only an unavailable conversation ends it', () {
+      for (final code in BackendErrorCode.values) {
+        final failure = BackendFailure(code: code, requestId: 'r-1');
+        expect(
+          endsConversation(failure),
+          code == BackendErrorCode.conversationNotFound ||
+              code == BackendErrorCode.conversationClosed,
+          reason: '$code',
+        );
+        expect(failureMessage(failure), isNotEmpty);
+      }
+      expect(endsConversation(const ConnectionFailure()), isFalse);
+    });
+
+    test('a connection failure asks to check the connection', () {
+      expect(failureMessage(const ConnectionFailure()), contains('conexión'));
+    });
+  });
+}

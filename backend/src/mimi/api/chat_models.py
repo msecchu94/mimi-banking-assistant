@@ -305,6 +305,10 @@ class ExpenseSummaryUiData(_ChatModel):
 
 
 class ExpenseComparisonUiData(_ChatModel):
+    """``category`` is the category both periods were filtered by, or null for
+    all expenses; it is always serialized."""
+
+    category: TransactionCategory | None
     current_period: ExpensePeriod
     previous_period: ExpensePeriod
     currencies: list[CurrencyComparison]
