@@ -17,6 +17,7 @@ import 'replies/confirmation_view.dart';
 import 'replies/expense_comparison_view.dart';
 import 'replies/expense_summary_view.dart';
 import 'replies/transaction_list_view.dart';
+import 'replies/transfer_summary_view.dart';
 
 /// The conversation with Mimi, rendered from the shared [ChatState].
 class ChatConversation extends ConsumerWidget {
@@ -98,14 +99,14 @@ class _AssistantReply extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Structured types rendered so far; the others show the backend message
-    // only.
+    // TEXT is the backend message alone.
     final structured = switch (reply.ui) {
       final ExpenseSummaryUi ui => ExpenseSummaryView(ui: ui),
       final ExpenseComparisonUi ui => ExpenseComparisonView(ui: ui),
       final CardListUi ui => CardListView(ui: ui),
       final TransactionListUi ui => TransactionListView(ui: ui),
       final BeneficiaryListUi ui => BeneficiaryListView(ui: ui),
+      final TransferSummaryUi ui => TransferSummaryView(ui: ui),
       final ConfirmationUi ui => ConfirmationView(
         ui: ui,
         actionable: actionable,
@@ -117,7 +118,7 @@ class _AssistantReply extends StatelessWidget {
         actionable: actionable,
         onSelect: controller.selectCard,
       ),
-      _ => null,
+      TextUi() => null,
     };
 
     return Column(

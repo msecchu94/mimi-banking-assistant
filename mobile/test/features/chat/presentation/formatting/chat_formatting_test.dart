@@ -199,6 +199,44 @@ void main() {
     });
   });
 
+  test('dateTimeLabel is a local day and 24 h time', () {
+    expect(dateTimeLabel(DateTime(2026, 11, 3, 19, 58)), '3 nov 2026, 19:58');
+    expect(dateTimeLabel(DateTime(2026, 1, 5, 7, 4)), '5 ene 2026, 07:04');
+  });
+
+  group('shortReferenceLabel', () {
+    test('keeps the start and end of a long reference', () {
+      expect(
+        shortReferenceLabel('bbb202a2-9083-434a-8551-c68d31c3ba39'),
+        'bbb202a2…ba39',
+      );
+    });
+
+    test('leaves a short reference whole', () {
+      expect(shortReferenceLabel('TR-0001'), 'TR-0001');
+      expect(shortReferenceLabel('bbb202a2-ba39'), 'bbb202a2-ba39');
+    });
+  });
+
+  test('transferShareText carries the structured data and full reference', () {
+    final transfer = TransferSummaryUi(
+      transferId: 'bbb202a2-9083-434a-8551-c68d31c3ba39',
+      beneficiary: 'Laura Gómez',
+      amount: Money(amount: '25000.00', currency: Currency.ars),
+      status: TransferStatus.completed,
+      executedAt: DateTime(2026, 11, 3, 19, 58),
+    );
+
+    expect(
+      transferShareText(transfer),
+      'Transferencia realizada\n'
+      'Monto: \$ 25.000,00 ARS\n'
+      'Destinatario: Laura Gómez\n'
+      'Fecha: 3 nov 2026, 19:58\n'
+      'Operación: bbb202a2-9083-434a-8551-c68d31c3ba39',
+    );
+  });
+
   group('failure messages', () {
     test('only an unavailable conversation ends it', () {
       for (final code in BackendErrorCode.values) {

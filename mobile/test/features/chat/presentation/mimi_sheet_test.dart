@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
@@ -16,6 +17,9 @@ import 'package:mimi/features/chat/presentation/conversation/replies/beneficiary
 import 'package:mimi/features/chat/presentation/conversation/replies/card_list_view.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/expense_comparison_view.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/transaction_list_view.dart';
+import 'package:mimi/features/chat/presentation/conversation/replies/transfer_completed_view.dart';
+import 'package:mimi/features/chat/presentation/conversation/replies/transfer_failed_view.dart';
+import 'package:mimi/features/chat/presentation/conversation/replies/transfer_summary_view.dart';
 import 'package:mimi/features/chat/presentation/mimi_sheet/mimi_sheet.dart';
 import 'package:mimi/features/home/presentation/home_page.dart';
 import 'package:mimi/shared/design_system/components/mimi_button.dart';
@@ -1016,29 +1020,126 @@ void main() {
     });
   });
 
-  testWidgets('other UI types show the backend message only', (tester) async {
-    final repository = _ScriptedRepository()
-      ..replies.add(
-        Right(
-          _reply(
-            'Tu transferencia fue realizada.',
-            ChatUi.transferSummary(
-              transferId: 'tr-1',
-              beneficiary: 'Laura Gómez',
-              amount: _ars('25000.00'),
-              status: TransferStatus.completed,
-              executedAt: DateTime.utc(2026, 10, 26, 12),
-            ),
-          ),
+  group('transfer summary', () {
+    const transferId = 'bbb202a2-9083-434a-8551-c68d31c3ba39';
+    const shareChannel = MethodChannel('dev.fluttercommunity.plus/share');
+
+    ChatUi transfer(TransferStatus status) => ChatUi.transferSummary(
+      transferId: transferId,
+      beneficiary: 'Laura Gómez',
+      amount: _ars('25000.00'),
+      status: status,
+      // Local, so the expected label holds in any timezone.
+      executedAt: DateTime(2026, 11, 3, 19, 58),
+    );
+
+    Future<_ScriptedRepository> showTransfer(
+      WidgetTester tester,
+      ChatUi ui, {
+      String message = 'Listo.',
+      Size size = _common,
+    }) async {
+      final repository = _ScriptedRepository()
+        ..replies.add(Right(_reply(message, ui)));
+      await _pumpHome(tester, repository, size: size);
+      await _openMimi(tester);
+      await _send(tester, 'Quiero mandar 25000 pesos a Laura');
+      return repository;
+    }
+
+    Finder inSummary(Finder finder) =>
+        find.descendant(of: find.byType(TransferSummaryView), matching: finder);
+
+    void expectDetails() {
+      expect(inSummary(find.text(r'$ 25.000,00')), findsOneWidget);
+      expect(inSummary(find.text('Laura Gómez')), findsOneWidget);
+      expect(inSummary(find.text('3 nov 2026, 19:58')), findsOneWidget);
+      expect(inSummary(find.text('bbb202a2…ba39')), findsOneWidget);
+      expect(find.textContaining(transferId), findsNothing);
+    }
+
+    testWidgets('a completed transfer shows its result and details', (
+      tester,
+    ) async {
+      await showTransfer(tester, transfer(TransferStatus.completed));
+
+      expect(find.byType(TransferCompletedView), findsOneWidget);
+      expect(find.byType(TransferFailedView), findsNothing);
+      expect(inSummary(find.text('Transferencia realizada')), findsOneWidget);
+      expect(inSummary(find.text('Compartir')), findsOneWidget);
+      expectDetails();
+    });
+
+    testWidgets('a failed transfer shows its result without sharing', (
+      tester,
+    ) async {
+      await showTransfer(tester, transfer(TransferStatus.failed));
+
+      expect(find.byType(TransferFailedView), findsOneWidget);
+      expect(find.byType(TransferCompletedView), findsNothing);
+      expect(
+        inSummary(find.text('Transferencia no realizada')),
+        findsOneWidget,
+      );
+      expect(inSummary(find.text('Compartir')), findsNothing);
+      expect(inSummary(find.byType(MimiButton)), findsNothing);
+      expectDetails();
+    });
+
+    testWidgets('the status decides the result, not the message', (
+      tester,
+    ) async {
+      await showTransfer(
+        tester,
+        transfer(TransferStatus.failed),
+        message: 'Tu transferencia fue realizada.',
+      );
+
+      expect(find.text('Tu transferencia fue realizada.'), findsOneWidget);
+      expect(find.byType(TransferFailedView), findsOneWidget);
+      expect(find.byType(TransferCompletedView), findsNothing);
+    });
+
+    testWidgets('sharing opens the system sheet, never Mimi', (tester) async {
+      final shared = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        shareChannel,
+        (call) async {
+          shared.add(call);
+          return 'dev.fluttercommunity.plus/share/success';
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          shareChannel,
+          null,
         ),
       );
-    await _pumpHome(tester, repository);
-    await _openMimi(tester);
+      final repository = await showTransfer(
+        tester,
+        transfer(TransferStatus.completed),
+      );
+      final callsBefore = repository.calls.length;
 
-    await _send(tester, 'Transferile a Laura');
+      await tester.tap(inSummary(find.text('Compartir')));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Tu transferencia fue realizada.'), findsOneWidget);
-    expect(find.text('Laura Gómez'), findsNothing);
+      expect(repository.calls, hasLength(callsBefore));
+      expect(shared, hasLength(1));
+      final text = (shared.single.arguments as Map)['text'] as String;
+      expect(text, contains(r'$ 25.000,00 ARS'));
+      expect(text, contains('Laura Gómez'));
+      expect(text, contains('3 nov 2026, 19:58'));
+      expect(text, contains(transferId));
+      expect(text, isNot(contains(_conversationId)));
+    });
+
+    testWidgets('lays out both results at 320 px', (tester) async {
+      for (final status in TransferStatus.values) {
+        await showTransfer(tester, transfer(status), size: _narrow);
+        expect(tester.takeException(), isNull, reason: '$status');
+      }
+    });
   });
 
   final layouts = {

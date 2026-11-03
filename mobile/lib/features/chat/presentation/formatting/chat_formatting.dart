@@ -69,6 +69,24 @@ String shortDateLabel(DateTime timestamp) {
   return '${local.day} ${_months[local.month - 1]}';
 }
 
+/// A day and time in the device's timezone, e.g. `3 nov 2026, 19:58`.
+String dateTimeLabel(DateTime timestamp) {
+  final local = timestamp.toLocal();
+  String twoDigits(int value) => value.toString().padLeft(2, '0');
+  return '${local.day} ${_months[local.month - 1]} ${local.year}, '
+      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+}
+
+/// A long reference shortened for display, e.g. `bbb202a2…ba39`. The full
+/// reference is kept wherever it is used, e.g. when sharing.
+String shortReferenceLabel(String reference) {
+  const head = 8;
+  const tail = 4;
+  if (reference.length <= head + tail + 1) return reference;
+  return '${reference.substring(0, head)}…'
+      '${reference.substring(reference.length - tail)}';
+}
+
 /// A period of whole days, e.g. `1 – 31 oct 2026`.
 String periodLabel(ExpensePeriod period) {
   final ExpensePeriod(:from, :to) = period;
@@ -166,4 +184,17 @@ String accountReferenceLabel(String reference) {
   final visible = reference.substring(mask.length);
   final dots = '•' * mask.length;
   return visible.isEmpty ? dots : '$dots $visible';
+}
+
+/// The text a completed transfer is shared as: its structured data only,
+/// with the full operation reference.
+String transferShareText(TransferSummaryUi transfer) {
+  final amount = transfer.amount;
+  return [
+    'Transferencia realizada',
+    'Monto: ${formatMoney(amount)} ${amount.currency.name.toUpperCase()}',
+    'Destinatario: ${transfer.beneficiary}',
+    'Fecha: ${dateTimeLabel(transfer.executedAt)}',
+    'Operación: ${transfer.transferId}',
+  ].join('\n');
 }
