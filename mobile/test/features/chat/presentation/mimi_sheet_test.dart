@@ -12,12 +12,14 @@ import 'package:mimi/features/chat/domain/models/chat_ui.dart';
 import 'package:mimi/features/chat/domain/models/conversation.dart';
 import 'package:mimi/features/chat/domain/models/money.dart';
 import 'package:mimi/features/chat/domain/repositories/chat_repository.dart';
+import 'package:mimi/features/chat/presentation/conversation/replies/beneficiary_list_view.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/card_list_view.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/expense_comparison_view.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/transaction_list_view.dart';
 import 'package:mimi/features/chat/presentation/mimi_sheet/mimi_sheet.dart';
 import 'package:mimi/features/home/presentation/home_page.dart';
 import 'package:mimi/shared/design_system/components/mimi_button.dart';
+import 'package:mimi/shared/design_system/components/mimi_list_item.dart';
 import 'package:mimi/shared/design_system/mimi_tokens.dart';
 
 import '../../../helpers/inter_font.dart';
@@ -839,21 +841,193 @@ void main() {
     });
   });
 
+  group('beneficiary list', () {
+    // The validated E2E response, in the backend's order.
+    const beneficiaries = [
+      Beneficiary(
+        id: 'acae3d19-8544-5df4-995e-e9a24dd804e8',
+        name: 'Diego Romero',
+        accountReference: '****0044',
+        bankName: 'Banco Austral',
+      ),
+      Beneficiary(
+        id: '382674c9-ca69-56b1-93a7-0e981d119888',
+        name: 'Laura Gómez',
+        accountReference: '****0011',
+        bankName: 'Banco Austral',
+      ),
+      Beneficiary(
+        id: '5a23656e-943d-595d-bda2-a7fe93b020cc',
+        name: 'Lucía Fernández',
+        accountReference: '****0033',
+        bankName: null,
+      ),
+      Beneficiary(
+        id: '8898bf64-e02d-55cc-8dde-219331388554',
+        name: 'Martín Pérez',
+        accountReference: '****0022',
+        bankName: 'Banco Río Claro',
+      ),
+      Beneficiary(
+        id: '2ab43286-bc8d-5d32-b67f-3e8fb7fd9939',
+        name: 'Sofía Benítez',
+        accountReference: '****0055',
+        bankName: 'Banco Meridiano',
+      ),
+    ];
+
+    Future<_ScriptedRepository> showBeneficiaries(
+      WidgetTester tester,
+      List<Beneficiary> beneficiaries, {
+      Size size = _common,
+    }) async {
+      final repository = _ScriptedRepository()
+        ..replies.add(
+          Right(
+            _reply(
+              'Estos son tus destinatarios guardados.',
+              ChatUi.beneficiaryList(beneficiaries: beneficiaries),
+            ),
+          ),
+        );
+      await _pumpHome(tester, repository, size: size);
+      await _openMimi(tester);
+      await _send(tester, 'Mostrame mis beneficiarios');
+      return repository;
+    }
+
+    Finder inList(Finder finder) =>
+        find.descendant(of: find.byType(BeneficiaryListView), matching: finder);
+
+    testWidgets('shows each beneficiary from the backend under its message', (
+      tester,
+    ) async {
+      await showBeneficiaries(tester, beneficiaries);
+
+      expect(
+        find.text('Estos son tus destinatarios guardados.'),
+        findsOneWidget,
+      );
+      expect(inList(find.text('Destinatarios')), findsOneWidget);
+      expect(inList(find.text('5')), findsOneWidget);
+      for (final (name, initials) in [
+        ('Diego Romero', 'DR'),
+        ('Laura Gómez', 'LG'),
+        ('Lucía Fernández', 'LF'),
+        ('Martín Pérez', 'MP'),
+        ('Sofía Benítez', 'SB'),
+      ]) {
+        expect(inList(find.text(name)), findsOneWidget);
+        expect(inList(find.text(initials)), findsOneWidget);
+      }
+      expect(inList(find.text('Banco Austral · •••• 0044')), findsOneWidget);
+      expect(inList(find.text('Banco Austral · •••• 0011')), findsOneWidget);
+      expect(inList(find.text('Banco Río Claro · •••• 0022')), findsOneWidget);
+      expect(inList(find.text('Banco Meridiano · •••• 0055')), findsOneWidget);
+    });
+
+    testWidgets('keeps the backend order', (tester) async {
+      await showBeneficiaries(tester, beneficiaries);
+
+      final tops = [
+        for (final beneficiary in beneficiaries)
+          tester.getTopLeft(inList(find.text(beneficiary.name))).dy,
+      ];
+      expect(tops, orderedEquals([...tops]..sort()));
+    });
+
+    testWidgets('a beneficiary without a bank shows its account alone', (
+      tester,
+    ) async {
+      await showBeneficiaries(tester, beneficiaries);
+
+      expect(inList(find.text('•••• 0033')), findsOneWidget);
+      expect(inList(find.textContaining('0033')), findsOneWidget);
+      for (final placeholder in ['Sin banco', 'N/A', 'null', ' · •••• 0033']) {
+        expect(inList(find.textContaining(placeholder)), findsNothing);
+      }
+    });
+
+    testWidgets('shows only the masked reference, never ids', (tester) async {
+      await showBeneficiaries(tester, beneficiaries);
+
+      final texts = tester
+          .widgetList<Text>(inList(find.byType(Text)))
+          .map((text) => text.data ?? '');
+      for (final text in texts) {
+        expect(text, isNot(contains('*')));
+        // Only the four digits the backend left visible.
+        expect(RegExp(r'\d{5,}').hasMatch(text), isFalse, reason: text);
+      }
+      for (final beneficiary in beneficiaries) {
+        expect(find.textContaining(beneficiary.id), findsNothing);
+      }
+    });
+
+    testWidgets('is display only, with no chevrons', (tester) async {
+      final repository = await showBeneficiaries(tester, beneficiaries);
+      final callsBefore = repository.calls.length;
+
+      await tester.tap(inList(find.text('Diego Romero')));
+      await tester.pumpAndSettle();
+
+      expect(repository.calls, hasLength(callsBefore));
+      final controls = inList(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is InkResponse ||
+              widget is MimiButton ||
+              (widget is GestureDetector && widget.onTap != null),
+        ),
+      );
+      expect(controls, findsNothing);
+      final icons = tester.widgetList<Icon>(inList(find.byType(Icon)));
+      expect(icons.map((icon) => icon.icon), [Icons.groups_outlined]);
+      expect(inList(find.textContaining('>')), findsNothing);
+      expect(inList(find.textContaining('›')), findsNothing);
+    });
+
+    testWidgets('lays out long names and banks at 320 px', (tester) async {
+      await showBeneficiaries(tester, [
+        ...beneficiaries,
+        const Beneficiary(
+          id: 'b-long',
+          name: 'María de los Ángeles Fernández Castellanos Rodríguez',
+          accountReference: '****0066',
+          bankName: 'Banco Cooperativo de la Provincia de Buenos Aires',
+        ),
+      ], size: _narrow);
+
+      expect(tester.takeException(), isNull);
+      expect(inList(find.text('6')), findsOneWidget);
+      expect(inList(find.text('MR')), findsOneWidget);
+      expect(find.byType(TextField).hitTestable(), findsOneWidget);
+    });
+
+    testWidgets('an empty list does not break the reply', (tester) async {
+      await showBeneficiaries(tester, const []);
+
+      expect(tester.takeException(), isNull);
+      expect(inList(find.text('Destinatarios')), findsOneWidget);
+      expect(inList(find.text('0')), findsOneWidget);
+      // The header alone: no rows and no text of Flutter's own.
+      expect(inList(find.byType(MimiListItem)), findsNothing);
+      expect(inList(find.byType(Text)), findsNWidgets(2));
+    });
+  });
+
   testWidgets('other UI types show the backend message only', (tester) async {
     final repository = _ScriptedRepository()
       ..replies.add(
         Right(
           _reply(
-            'Encontré un destinatario.',
-            const ChatUi.beneficiaryList(
-              beneficiaries: [
-                Beneficiary(
-                  id: 'b-1',
-                  name: 'Laura Gómez',
-                  accountReference: '****4582',
-                  bankName: null,
-                ),
-              ],
+            'Tu transferencia fue realizada.',
+            ChatUi.transferSummary(
+              transferId: 'tr-1',
+              beneficiary: 'Laura Gómez',
+              amount: _ars('25000.00'),
+              status: TransferStatus.completed,
+              executedAt: DateTime.utc(2026, 10, 26, 12),
             ),
           ),
         ),
@@ -861,9 +1035,9 @@ void main() {
     await _pumpHome(tester, repository);
     await _openMimi(tester);
 
-    await _send(tester, '¿A quién puedo transferir?');
+    await _send(tester, 'Transferile a Laura');
 
-    expect(find.text('Encontré un destinatario.'), findsOneWidget);
+    expect(find.text('Tu transferencia fue realizada.'), findsOneWidget);
     expect(find.text('Laura Gómez'), findsNothing);
   });
 

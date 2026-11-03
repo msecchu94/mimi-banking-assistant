@@ -144,3 +144,26 @@ String cardStatusLabel(CardStatus status) => switch (status) {
   CardStatus.active => 'Activa',
   CardStatus.frozen => 'Congelada',
 };
+
+/// A beneficiary's initials, e.g. `DR` for `Diego Romero`: the first letter
+/// of the first and last words, or of the only one. Presentation only.
+String beneficiaryInitials(String name) {
+  final words = name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+  if (words.isEmpty) return '?';
+  String first(String word) => String.fromCharCode(word.runes.first);
+  final initials = words.length == 1
+      ? first(words.first)
+      : first(words.first) + first(words.last);
+  return initials.toUpperCase();
+}
+
+/// The backend's masked reference made easier to read, e.g. `****0044` →
+/// `•••• 0044`. Only the mask characters change; anything else is shown as
+/// sent.
+String accountReferenceLabel(String reference) {
+  final mask = RegExp(r'^\*+').firstMatch(reference)?.group(0);
+  if (mask == null) return reference;
+  final visible = reference.substring(mask.length);
+  final dots = '•' * mask.length;
+  return visible.isEmpty ? dots : '$dots $visible';
+}

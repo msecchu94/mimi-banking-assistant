@@ -166,6 +166,39 @@ void main() {
     expect(cardStatusLabel(CardStatus.frozen), 'Congelada');
   });
 
+  group('beneficiaryInitials', () {
+    final cases = {
+      'Diego Romero': 'DR',
+      'Lucía Fernández': 'LF',
+      'Martín Pérez': 'MP',
+      '  ana   maría   soto ': 'AS',
+      'Laura': 'L',
+      'Élodie': 'É',
+      '': '?',
+      '   ': '?',
+    };
+    cases.forEach((name, expected) {
+      test('"$name" → $expected', () {
+        expect(beneficiaryInitials(name), expected);
+      });
+    });
+  });
+
+  group('accountReferenceLabel', () {
+    final cases = {
+      '****0044': '•••• 0044',
+      '**12': '•• 12',
+      '****': '••••',
+      'CBU 0044': 'CBU 0044',
+      '0044': '0044',
+    };
+    cases.forEach((reference, expected) {
+      test('$reference → $expected', () {
+        expect(accountReferenceLabel(reference), expected);
+      });
+    });
+  });
+
   group('failure messages', () {
     test('only an unavailable conversation ends it', () {
       for (final code in BackendErrorCode.values) {

@@ -58,6 +58,57 @@ void main() {
       expect(_ui(cardListUiJson), const ChatUi.cardList(cards: [_card]));
     });
 
+    test('BENEFICIARY_LIST keeps every beneficiary, in backend order', () {
+      Map<String, dynamic> beneficiary(
+        String id,
+        String name,
+        String reference,
+        String? bank,
+      ) => {
+        'id': id,
+        'name': name,
+        'account_reference': reference,
+        'bank_name': bank,
+      };
+
+      final ui = _ui({
+        'type': 'BENEFICIARY_LIST',
+        'data': {
+          'beneficiaries': [
+            beneficiary('b-2', 'Laura Gómez', '****0011', 'Banco Austral'),
+            beneficiary('b-1', 'Diego Romero', '****0044', 'Banco Austral'),
+            beneficiary('b-3', 'Lucía Fernández', '****0033', null),
+          ],
+        },
+      });
+
+      expect(
+        ui,
+        const ChatUi.beneficiaryList(
+          beneficiaries: [
+            Beneficiary(
+              id: 'b-2',
+              name: 'Laura Gómez',
+              accountReference: '****0011',
+              bankName: 'Banco Austral',
+            ),
+            Beneficiary(
+              id: 'b-1',
+              name: 'Diego Romero',
+              accountReference: '****0044',
+              bankName: 'Banco Austral',
+            ),
+            Beneficiary(
+              id: 'b-3',
+              name: 'Lucía Fernández',
+              accountReference: '****0033',
+              bankName: null,
+            ),
+          ],
+        ),
+      );
+    });
+
     test('BENEFICIARY_LIST', () {
       expect(
         _ui(beneficiaryListUiJson),
