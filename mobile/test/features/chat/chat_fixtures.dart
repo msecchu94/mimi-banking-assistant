@@ -127,6 +127,7 @@ const expenseSummaryUiJson = {
 const expenseComparisonUiJson = {
   'type': 'EXPENSE_COMPARISON',
   'data': {
+    'category': 'GROCERIES',
     'current_period': {'from': '2026-10-01', 'to': '2026-10-31'},
     'previous_period': {'from': '2026-09-01', 'to': '2026-09-30'},
     'currencies': [

@@ -4,6 +4,7 @@ import 'package:mimi/shared/design_system/components/mimi_button.dart';
 import 'package:mimi/shared/design_system/components/mimi_composer.dart';
 import 'package:mimi/shared/design_system/components/mimi_fab.dart';
 import 'package:mimi/shared/design_system/components/mimi_icon_button.dart';
+import 'package:mimi/shared/design_system/components/mimi_list_item.dart';
 
 Future<void> _pump(WidgetTester tester, Widget child) => tester.pumpWidget(
   MaterialApp(
@@ -72,6 +73,25 @@ void main() {
 
     expect(taps, 1);
     expect(tester.getSize(find.byType(MimiFab)).height, 48);
+  });
+
+  testWidgets('MimiListItem places an optional leading before its title', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      const MimiListItem(
+        leading: Icon(Icons.restaurant_outlined),
+        title: 'Café',
+        description: 'Gastronomía',
+      ),
+    );
+
+    expect(find.byIcon(Icons.restaurant_outlined), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byIcon(Icons.restaurant_outlined)).dx,
+      lessThan(tester.getTopLeft(find.text('Café')).dx),
+    );
   });
 
   group('MimiComposer', () {

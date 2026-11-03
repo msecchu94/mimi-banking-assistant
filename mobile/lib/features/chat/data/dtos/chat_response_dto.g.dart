@@ -343,6 +343,7 @@ _ExpenseComparisonDataDto _$ExpenseComparisonDataDtoFromJson(
   json,
   ($checkedConvert) {
     final val = _ExpenseComparisonDataDto(
+      category: $checkedConvert('category', (v) => v as String?),
       currentPeriod: $checkedConvert(
         'current_period',
         (v) => ExpensePeriodDto.fromJson(v as Map<String, dynamic>),
@@ -371,6 +372,7 @@ _ExpenseComparisonDataDto _$ExpenseComparisonDataDtoFromJson(
 Map<String, dynamic> _$ExpenseComparisonDataDtoToJson(
   _ExpenseComparisonDataDto instance,
 ) => <String, dynamic>{
+  'category': instance.category,
   'current_period': instance.currentPeriod.toJson(),
   'previous_period': instance.previousPeriod.toJson(),
   'currencies': instance.currencies.map((e) => e.toJson()).toList(),

@@ -141,7 +141,7 @@ return transferSummary(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  text,TResult Function( List<BankCard> cards)?  cardList,TResult Function( List<BankCard> cards)?  cardSelector,TResult Function( List<Beneficiary> beneficiaries)?  beneficiaryList,TResult Function( String operationId,  String title,  ConfirmationSummary summary,  List<ConfirmationAction> actions)?  confirmation,TResult Function( ExpensePeriod period,  List<CurrencyExpenses> currencies)?  expenseSummary,TResult Function( ExpensePeriod currentPeriod,  ExpensePeriod previousPeriod,  List<CurrencyComparison> currencies)?  expenseComparison,TResult Function( List<Transaction> transactions)?  transactionList,TResult Function( String transferId,  String beneficiary,  Money amount,  TransferStatus status,  DateTime executedAt)?  transferSummary,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  text,TResult Function( List<BankCard> cards)?  cardList,TResult Function( List<BankCard> cards)?  cardSelector,TResult Function( List<Beneficiary> beneficiaries)?  beneficiaryList,TResult Function( String operationId,  String title,  ConfirmationSummary summary,  List<ConfirmationAction> actions)?  confirmation,TResult Function( ExpensePeriod period,  List<CurrencyExpenses> currencies)?  expenseSummary,TResult Function( TransactionCategory? category,  ExpensePeriod currentPeriod,  ExpensePeriod previousPeriod,  List<CurrencyComparison> currencies)?  expenseComparison,TResult Function( List<Transaction> transactions)?  transactionList,TResult Function( String transferId,  String beneficiary,  Money amount,  TransferStatus status,  DateTime executedAt)?  transferSummary,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case TextUi() when text != null:
 return text();case CardListUi() when cardList != null:
@@ -150,7 +150,7 @@ return cardSelector(_that.cards);case BeneficiaryListUi() when beneficiaryList !
 return beneficiaryList(_that.beneficiaries);case ConfirmationUi() when confirmation != null:
 return confirmation(_that.operationId,_that.title,_that.summary,_that.actions);case ExpenseSummaryUi() when expenseSummary != null:
 return expenseSummary(_that.period,_that.currencies);case ExpenseComparisonUi() when expenseComparison != null:
-return expenseComparison(_that.currentPeriod,_that.previousPeriod,_that.currencies);case TransactionListUi() when transactionList != null:
+return expenseComparison(_that.category,_that.currentPeriod,_that.previousPeriod,_that.currencies);case TransactionListUi() when transactionList != null:
 return transactionList(_that.transactions);case TransferSummaryUi() when transferSummary != null:
 return transferSummary(_that.transferId,_that.beneficiary,_that.amount,_that.status,_that.executedAt);case _:
   return orElse();
@@ -170,7 +170,7 @@ return transferSummary(_that.transferId,_that.beneficiary,_that.amount,_that.sta
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  text,required TResult Function( List<BankCard> cards)  cardList,required TResult Function( List<BankCard> cards)  cardSelector,required TResult Function( List<Beneficiary> beneficiaries)  beneficiaryList,required TResult Function( String operationId,  String title,  ConfirmationSummary summary,  List<ConfirmationAction> actions)  confirmation,required TResult Function( ExpensePeriod period,  List<CurrencyExpenses> currencies)  expenseSummary,required TResult Function( ExpensePeriod currentPeriod,  ExpensePeriod previousPeriod,  List<CurrencyComparison> currencies)  expenseComparison,required TResult Function( List<Transaction> transactions)  transactionList,required TResult Function( String transferId,  String beneficiary,  Money amount,  TransferStatus status,  DateTime executedAt)  transferSummary,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  text,required TResult Function( List<BankCard> cards)  cardList,required TResult Function( List<BankCard> cards)  cardSelector,required TResult Function( List<Beneficiary> beneficiaries)  beneficiaryList,required TResult Function( String operationId,  String title,  ConfirmationSummary summary,  List<ConfirmationAction> actions)  confirmation,required TResult Function( ExpensePeriod period,  List<CurrencyExpenses> currencies)  expenseSummary,required TResult Function( TransactionCategory? category,  ExpensePeriod currentPeriod,  ExpensePeriod previousPeriod,  List<CurrencyComparison> currencies)  expenseComparison,required TResult Function( List<Transaction> transactions)  transactionList,required TResult Function( String transferId,  String beneficiary,  Money amount,  TransferStatus status,  DateTime executedAt)  transferSummary,}) {final _that = this;
 switch (_that) {
 case TextUi():
 return text();case CardListUi():
@@ -179,7 +179,7 @@ return cardSelector(_that.cards);case BeneficiaryListUi():
 return beneficiaryList(_that.beneficiaries);case ConfirmationUi():
 return confirmation(_that.operationId,_that.title,_that.summary,_that.actions);case ExpenseSummaryUi():
 return expenseSummary(_that.period,_that.currencies);case ExpenseComparisonUi():
-return expenseComparison(_that.currentPeriod,_that.previousPeriod,_that.currencies);case TransactionListUi():
+return expenseComparison(_that.category,_that.currentPeriod,_that.previousPeriod,_that.currencies);case TransactionListUi():
 return transactionList(_that.transactions);case TransferSummaryUi():
 return transferSummary(_that.transferId,_that.beneficiary,_that.amount,_that.status,_that.executedAt);}
 }
@@ -195,7 +195,7 @@ return transferSummary(_that.transferId,_that.beneficiary,_that.amount,_that.sta
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  text,TResult? Function( List<BankCard> cards)?  cardList,TResult? Function( List<BankCard> cards)?  cardSelector,TResult? Function( List<Beneficiary> beneficiaries)?  beneficiaryList,TResult? Function( String operationId,  String title,  ConfirmationSummary summary,  List<ConfirmationAction> actions)?  confirmation,TResult? Function( ExpensePeriod period,  List<CurrencyExpenses> currencies)?  expenseSummary,TResult? Function( ExpensePeriod currentPeriod,  ExpensePeriod previousPeriod,  List<CurrencyComparison> currencies)?  expenseComparison,TResult? Function( List<Transaction> transactions)?  transactionList,TResult? Function( String transferId,  String beneficiary,  Money amount,  TransferStatus status,  DateTime executedAt)?  transferSummary,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  text,TResult? Function( List<BankCard> cards)?  cardList,TResult? Function( List<BankCard> cards)?  cardSelector,TResult? Function( List<Beneficiary> beneficiaries)?  beneficiaryList,TResult? Function( String operationId,  String title,  ConfirmationSummary summary,  List<ConfirmationAction> actions)?  confirmation,TResult? Function( ExpensePeriod period,  List<CurrencyExpenses> currencies)?  expenseSummary,TResult? Function( TransactionCategory? category,  ExpensePeriod currentPeriod,  ExpensePeriod previousPeriod,  List<CurrencyComparison> currencies)?  expenseComparison,TResult? Function( List<Transaction> transactions)?  transactionList,TResult? Function( String transferId,  String beneficiary,  Money amount,  TransferStatus status,  DateTime executedAt)?  transferSummary,}) {final _that = this;
 switch (_that) {
 case TextUi() when text != null:
 return text();case CardListUi() when cardList != null:
@@ -204,7 +204,7 @@ return cardSelector(_that.cards);case BeneficiaryListUi() when beneficiaryList !
 return beneficiaryList(_that.beneficiaries);case ConfirmationUi() when confirmation != null:
 return confirmation(_that.operationId,_that.title,_that.summary,_that.actions);case ExpenseSummaryUi() when expenseSummary != null:
 return expenseSummary(_that.period,_that.currencies);case ExpenseComparisonUi() when expenseComparison != null:
-return expenseComparison(_that.currentPeriod,_that.previousPeriod,_that.currencies);case TransactionListUi() when transactionList != null:
+return expenseComparison(_that.category,_that.currentPeriod,_that.previousPeriod,_that.currencies);case TransactionListUi() when transactionList != null:
 return transactionList(_that.transactions);case TransferSummaryUi() when transferSummary != null:
 return transferSummary(_that.transferId,_that.beneficiary,_that.amount,_that.status,_that.executedAt);case _:
   return null;
@@ -646,9 +646,10 @@ $ExpensePeriodCopyWith<$Res> get period {
 
 
 class ExpenseComparisonUi implements ChatUi {
-  const ExpenseComparisonUi({required this.currentPeriod, required this.previousPeriod, required  List<CurrencyComparison> currencies}): _currencies = currencies;
+  const ExpenseComparisonUi({required this.category, required this.currentPeriod, required this.previousPeriod, required  List<CurrencyComparison> currencies}): _currencies = currencies;
   
 
+ final  TransactionCategory? category;
  final  ExpensePeriod currentPeriod;
  final  ExpensePeriod previousPeriod;
  final  List<CurrencyComparison> _currencies;
@@ -669,18 +670,18 @@ $ExpenseComparisonUiCopyWith<ExpenseComparisonUi> get copyWith => _$ExpenseCompa
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is ExpenseComparisonUi&&(identical(other.currentPeriod, currentPeriod) || other.currentPeriod == currentPeriod)&&(identical(other.previousPeriod, previousPeriod) || other.previousPeriod == previousPeriod)&&const DeepCollectionEquality().equals(other.currencies, _currencies));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is ExpenseComparisonUi&&(identical(other.category, category) || other.category == category)&&(identical(other.currentPeriod, currentPeriod) || other.currentPeriod == currentPeriod)&&(identical(other.previousPeriod, previousPeriod) || other.previousPeriod == previousPeriod)&&const DeepCollectionEquality().equals(other.currencies, _currencies));
 }
 
 
 @override
 int get hashCode {
-    return Object.hash(runtimeType,currentPeriod,previousPeriod,const DeepCollectionEquality().hash(_currencies));
+    return Object.hash(runtimeType,category,currentPeriod,previousPeriod,const DeepCollectionEquality().hash(_currencies));
 }
 
 @override
 String toString() {
-    return 'ChatUi.expenseComparison(currentPeriod: $currentPeriod, previousPeriod: $previousPeriod, currencies: $currencies)';
+    return 'ChatUi.expenseComparison(category: $category, currentPeriod: $currentPeriod, previousPeriod: $previousPeriod, currencies: $currencies)';
 }
 
 
@@ -691,7 +692,7 @@ abstract mixin class $ExpenseComparisonUiCopyWith<$Res> implements $ChatUiCopyWi
   factory $ExpenseComparisonUiCopyWith(ExpenseComparisonUi value, $Res Function(ExpenseComparisonUi) _then) = _$ExpenseComparisonUiCopyWithImpl;
 @useResult
 $Res call({
- ExpensePeriod currentPeriod, ExpensePeriod previousPeriod, List<CurrencyComparison> currencies
+ TransactionCategory? category, ExpensePeriod currentPeriod, ExpensePeriod previousPeriod, List<CurrencyComparison> currencies
 });
 
 
@@ -708,9 +709,10 @@ class _$ExpenseComparisonUiCopyWithImpl<$Res>
 
 /// Create a copy of ChatUi
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? currentPeriod = null,Object? previousPeriod = null,Object? currencies = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? category = freezed,Object? currentPeriod = null,Object? previousPeriod = null,Object? currencies = null,}) {
   return _then(ExpenseComparisonUi(
-currentPeriod: null == currentPeriod ? _self.currentPeriod : currentPeriod // ignore: cast_nullable_to_non_nullable
+category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as TransactionCategory?,currentPeriod: null == currentPeriod ? _self.currentPeriod : currentPeriod // ignore: cast_nullable_to_non_nullable
 as ExpensePeriod,previousPeriod: null == previousPeriod ? _self.previousPeriod : previousPeriod // ignore: cast_nullable_to_non_nullable
 as ExpensePeriod,currencies: null == currencies ? _self._currencies : currencies // ignore: cast_nullable_to_non_nullable
 as List<CurrencyComparison>,

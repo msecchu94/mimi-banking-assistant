@@ -35,7 +35,10 @@ sealed class ChatUi with _$ChatUi {
     required List<CurrencyExpenses> currencies,
   }) = ExpenseSummaryUi;
 
+  /// Expenses compared per currency; [category] is the filter both periods
+  /// share, or null when all expenses are compared.
   const factory ChatUi.expenseComparison({
+    required TransactionCategory? category,
     required ExpensePeriod currentPeriod,
     required ExpensePeriod previousPeriod,
     required List<CurrencyComparison> currencies,

@@ -57,6 +57,10 @@ ChatUi _ui(UiResponseDto dto) => switch (dto) {
     currencies: data.currencies.map(_currencyExpenses).toList(),
   ),
   ExpenseComparisonUiDto(:final data) => ChatUi.expenseComparison(
+    category: switch (data.category) {
+      final category? => _enum(TransactionCategory.values, category),
+      null => null,
+    },
     currentPeriod: _period(data.currentPeriod),
     previousPeriod: _period(data.previousPeriod),
     currencies: data.currencies.map(_comparison).toList(),
