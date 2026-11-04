@@ -97,7 +97,7 @@ chat "¿Cuánta plata tengo?"
 ```json
 {
   "conversation_id": "7b1e6f0c-2a9d-4c55-9b0e-3f7c1d2a8e41",
-  "message": "Estos son tus saldos: Cuenta principal: 1236480.75 ARS; Caja de ahorro en dólares: 2450.00 USD.",
+  "message": "Estos son tus saldos: Cuenta principal: 1386480.75 ARS; Caja de ahorro en dólares: 2450.00 USD.",
   "intent": "GET_BALANCE",
   "conversation_state": "READY",
   "ui": { "type": "TEXT", "data": {} },

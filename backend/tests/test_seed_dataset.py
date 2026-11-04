@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -74,7 +74,7 @@ def test_dataset_contents(dataset: SeedDataset) -> None:
         (account.name, account.currency, account.balance, account.status)
         for account in dataset.accounts
     ] == [
-        ("Cuenta principal", Currency.ARS, Decimal("1236480.75"), AccountStatus.ACTIVE),
+        ("Cuenta principal", Currency.ARS, Decimal("1386480.75"), AccountStatus.ACTIVE),
         (
             "Caja de ahorro en dólares",
             Currency.USD,
@@ -201,12 +201,10 @@ def test_add_months_clamps_to_shorter_months(
     assert add_months(day, months) == expected
 
 
-@pytest.mark.parametrize("reference_date", REPRESENTATIVE_DATES)
-def test_history_reconciles_with_persisted_balance(reference_date: date) -> None:
-    dataset = build_dataset(reference_date)
+def assert_history_reconciles(dataset: SeedDataset, reference_date: date) -> None:
     window_start = add_months(reference_date, -3)
 
-    assert dataset.main_account_opening_balance >= 0
+    assert dataset.main_account_opening_balance >= 0, reference_date
     running = dataset.main_account_opening_balance
     for transaction in dataset.transactions:
         assert window_start <= local_date(transaction) < reference_date
@@ -214,9 +212,25 @@ def test_history_reconciles_with_persisted_balance(reference_date: date) -> None
             running += transaction.amount
         else:
             running -= transaction.amount
-        assert running >= 0
+        assert running >= 0, reference_date
     assert running == MAIN_ACCOUNT_BALANCE
+
+
+@pytest.mark.parametrize("reference_date", REPRESENTATIVE_DATES)
+def test_history_reconciles_with_persisted_balance(reference_date: date) -> None:
+    dataset = build_dataset(reference_date)
+
+    assert_history_reconciles(dataset, reference_date)
     assert 85 <= len(dataset.transactions) <= 95
+
+
+def test_history_reconciles_for_every_reference_date_over_four_years() -> None:
+    # Covers every day of month, all month lengths and a leap year; a window
+    # starting on days 2-6 excludes that month's salary but not its expenses.
+    reference_date = date(2025, 1, 1)
+    while reference_date < date(2029, 1, 1):
+        assert_history_reconciles(build_dataset(reference_date), reference_date)
+        reference_date += timedelta(days=1)
 
 
 def test_history_that_would_overdraw_is_rejected(

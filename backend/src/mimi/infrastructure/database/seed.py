@@ -54,7 +54,7 @@ BUENOS_AIRES = timezone(timedelta(hours=-3))
 
 HISTORY_MONTHS = 3
 
-MAIN_ACCOUNT_BALANCE = Decimal("1236480.75")
+MAIN_ACCOUNT_BALANCE = Decimal("1386480.75")
 USD_SAVINGS_BALANCE = Decimal("2450.00")
 
 

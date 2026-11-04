@@ -191,7 +191,7 @@ def test_seed_persists_dataset_readable_by_repositories(
         )
 
     assert {account.balance for account in accounts} == {
-        Money(Decimal("1236480.75"), Currency.ARS),
+        Money(Decimal("1386480.75"), Currency.ARS),
         Money(Decimal("2450.00"), Currency.USD),
     }
     assert sorted(card.status for card in cards) == [
@@ -231,7 +231,7 @@ def test_reset_restores_original_dataset(
     with session_factory() as session:
         assert session.get_one(CardModel, VISA_DEBIT_ID).status is CardStatus.ACTIVE
         assert session.get_one(AccountModel, MAIN_ACCOUNT_ID).balance == Decimal(
-            "1236480.75"
+            "1386480.75"
         )
 
 
