@@ -861,6 +861,69 @@ def test_engine_concurrent_confirms_cannot_double_spend_the_source_account(
         )
 
 
+def test_engine_concurrent_duplicate_confirms_execute_the_transfer_once(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+
+    # The first confirmation holds the conversation lock, while executing the
+    # transfer, until the duplicate one waits for it.
+    locked = threading.Event()
+    release = threading.Event()
+    get_for_update = PostgresAccountRepository.get_for_update
+
+    def hold_first_lock(
+        self: PostgresAccountRepository, customer_id: UUID, account_id: UUID
+    ) -> Account | None:
+        account = get_for_update(self, customer_id, account_id)
+        if not locked.is_set():
+            locked.set()
+            release.wait(CONCURRENCY_TIMEOUT_SECONDS)
+        return account
+
+    monkeypatch.setattr(PostgresAccountRepository, "get_for_update", hold_first_lock)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        try:
+            first = executor.submit(
+                engine.handle_interaction,
+                seed.customer_id,
+                conversation_id,
+                Confirm(OPERATION_ID),
+            )
+            assert locked.wait(CONCURRENCY_TIMEOUT_SECONDS)
+            second = executor.submit(
+                engine.handle_interaction,
+                seed.customer_id,
+                conversation_id,
+                Confirm(OPERATION_ID),
+            )
+            wait_for_lock_waiter(session_factory)
+        finally:
+            release.set()
+        completed = first.result(CONCURRENCY_TIMEOUT_SECONDS)
+        duplicate = second.result(CONCURRENCY_TIMEOUT_SECONDS)
+
+    assert isinstance(completed.result, OperationCompletedResult)
+    transfer = completed.result.transfer
+    assert transfer is not None
+    assert duplicate.result == NoPendingOperationResult(Confirm(OPERATION_ID))
+    assert financial_state(session_factory, seed) == (Decimal("125000.50"), 1, 1)
+    with session_factory() as session:
+        [transaction] = session.scalars(select(TransactionModel))
+        assert transaction.transfer_id == transfer.id
+        assert transaction.type is TransactionType.DEBIT
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+
 @dataclass(frozen=True)
 class SeedCards:
     active: Card
