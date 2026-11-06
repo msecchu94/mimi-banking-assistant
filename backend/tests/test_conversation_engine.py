@@ -2537,6 +2537,74 @@ def test_confirm_after_failed_revalidation_executes_nothing(
     assert balance(scope) == SAVINGS.balance
 
 
+@pytest.mark.parametrize(
+    ("flow_state", "operation"),
+    [
+        (ConversationFlowState.COLLECTING_DATA, TRANSFER_TO_LAURA),
+        (ConversationFlowState.WAITING_CONFIRMATION, LAURA_25000),
+    ],
+    ids=["collecting", "waiting"],
+)
+@pytest.mark.parametrize(
+    "error", [LLMUnavailableError(), LLMInvalidResponseError()], ids=type
+)
+@pytest.mark.parametrize("failing", ["collection", "message"])
+def test_failed_interpretation_keeps_the_pending_operation(
+    engine: ConversationEngine,
+    scope: FakeTransactionScope,
+    llm: FakeLLMProvider,
+    executable: FakeRepositories,
+    flow_state: ConversationFlowState,
+    operation: PendingOperation,
+    error: Exception,
+    failing: str,
+) -> None:
+    conversation_id = in_state(scope, flow_state, operation)
+    record = scope.repositories.conversations.records[conversation_id]
+    cards = list(executable.cards.cards)
+    if failing == "collection":
+        llm.error = error
+    else:
+        # The reply is not data for the operation, so it is then interpreted
+        # on its own, which fails.
+        def fail_message_interpretation() -> None:
+            if llm.calls:
+                raise error
+
+        llm.on_call = fail_message_interpretation
+
+    with pytest.raises(type(error)):
+        engine.handle_message(CUSTOMER_ID, conversation_id, "Sí, dale")
+
+    assert llm.collection_calls == ["Sí, dale"]
+    assert llm.calls == ([] if failing == "collection" else ["Sí, dale"])
+    assert scope.repositories.conversations.records[conversation_id] == record
+    assert stored_state(scope, conversation_id) == (flow_state, operation)
+    assert scope.repositories.messages.messages == []
+    assert executable.transfers.transfers == []
+    assert executable.cards.cards == cards
+    assert balance(scope) == SAVINGS.balance
+
+    # The operation can still be completed and confirmed.
+    llm.error = None
+    llm.on_call = None
+    if operation.operation_id is None:
+        collected = reply(
+            engine, llm, conversation_id, "25000", collection_output(amount="25000")
+        )
+        operation = awaiting(collected, LAURA_25000)
+    turn = interact(engine, llm, conversation_id, confirm(operation))
+
+    [(transfer, transaction)] = executable.transfers.transfers
+    assert turn.result == OperationCompletedResult(
+        operation, transfer=transfer, beneficiary=LAURA
+    )
+    assert transfer.amount == Money(Decimal("25000.00"), Currency.ARS)
+    assert transaction is not None and transaction.transfer_id == transfer.id
+    assert balance(scope) == Money(Decimal("125000.50"), Currency.ARS)
+    assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
+
+
 # Closing.
 
 
