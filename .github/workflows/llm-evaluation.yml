@@ -1,0 +1,60 @@
+name: LLM Evaluation
+
+# Manual and informational only: calls the real LLM provider and incurs API
+# cost. Evaluation FAIL cases never fail the job; review the report instead.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "LLM model name (MIMI_LLM_MODEL)"
+        required: true
+        default: "gpt-5.4-mini"
+
+permissions:
+  contents: read
+
+# One evaluation at a time; never cancel a run that is already spending.
+concurrency:
+  group: llm-evaluation
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    name: Interpretation evaluation (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      MIMI_LLM_PROVIDER: openai
+      MIMI_LLM_MODEL: ${{ inputs.model }}
+      MIMI_LLM_API_KEY: ${{ secrets.MIMI_LLM_API_KEY }}
+      # Required by Settings validation; the evaluation never connects to it.
+      MIMI_DATABASE_URL: postgresql+psycopg://unused:unused@localhost:5432/unused
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend
+        run: pip install -e .
+
+      - name: Run evaluation (dataset v3)
+        run: >-
+          python -m mimi.evaluation
+          --dataset evals/interpretation/dataset.v3.jsonl
+          --output evals/interpretation/reports/report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: llm-evaluation-report
+          path: backend/evals/interpretation/reports/report.json
+          if-no-files-found: warn
+          retention-days: 30

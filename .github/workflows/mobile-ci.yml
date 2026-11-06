@@ -1,0 +1,59 @@
+name: Mobile CI
+
+on:
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mobile:
+    name: Format, analyze and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.47.9"
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Dart format
+        run: dart format --output=none --set-exit-if-changed lib test integration_test
+
+      - name: Flutter analyze
+        run: flutter analyze
+
+      # Unit and widget tests only; integration_test/ needs a device.
+      - name: Flutter test (with coverage)
+        run: flutter test --coverage
+
+      - name: Coverage summary (report-only, excludes generated code)
+        run: |
+          awk -F'[:,]' '
+            /^SF:/ { gen = ($2 ~ /\.(g|gr|freezed)\.dart$/) }
+            /^LF:/ && !gen { lf += $2 }
+            /^LH:/ && !gen { lh += $2 }
+            END { printf "Line coverage: %d/%d = %.1f%%\n", lh, lf, 100 * lh / lf }
+          ' coverage/lcov.info
