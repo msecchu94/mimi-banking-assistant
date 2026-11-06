@@ -767,6 +767,55 @@ def test_engine_correction_invalidates_the_earlier_confirmation(
     )
 
 
+def test_engine_rejects_confirming_another_conversations_operation(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    llm_provider.intent = Intent.TRANSFER_MONEY
+    llm_provider.values = {"amount": "25000.00", "beneficiary_reference": "Laura"}
+    waiting: list[tuple[UUID, PendingOperation]] = []
+    for _ in range(2):
+        conversation_id = engine.start(seed.customer_id).conversation.id
+        requested = engine.handle_message(
+            seed.customer_id, conversation_id, "Transferile 25000 a Laura"
+        )
+        assert isinstance(requested.result, AwaitingConfirmationResult)
+        assert requested.result.operation.operation_id is not None
+        waiting.append((conversation_id, requested.result.operation))
+    (a_id, a_operation), (b_id, b_operation) = waiting
+    assert a_operation.operation_id is not None
+    assert b_operation.operation_id is not None
+    assert a_operation.operation_id != b_operation.operation_id
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    with pytest.raises(InvalidInteractionError):
+        engine.handle_interaction(
+            seed.customer_id, b_id, Confirm(a_operation.operation_id)
+        )
+
+    assert financial_state(session_factory, seed) == (Decimal("150000.50"), 0, 0)
+    for conversation_id, operation in waiting:
+        assert stored_flow(session_factory, seed, conversation_id) == (
+            ConversationFlowState.WAITING_CONFIRMATION,
+            operation,
+        )
+
+    for conversation_id, operation in waiting:
+        assert operation.operation_id is not None
+        confirmed = engine.handle_interaction(
+            seed.customer_id, conversation_id, Confirm(operation.operation_id)
+        )
+        assert isinstance(confirmed.result, OperationCompletedResult)
+        assert confirmed.result.operation == operation
+        assert stored_flow(session_factory, seed, conversation_id) == (
+            ConversationFlowState.READY,
+            None,
+        )
+    assert financial_state(session_factory, seed) == (Decimal("100000.50"), 2, 2)
+
+
 CONCURRENCY_TIMEOUT_SECONDS = 10
 
 
