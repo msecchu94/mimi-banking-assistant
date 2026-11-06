@@ -276,7 +276,7 @@ def test_rejects_empty_and_missing_datasets(tmp_path: Path) -> None:
 def test_committed_dataset_is_valid() -> None:
     dataset = load_dataset(runner.DEFAULT_DATASET)
 
-    assert dataset.version == "v2"
+    assert dataset.version == "v3"
     assert len(dataset.cases) >= 60
     assert {c.expected.intent for c in dataset.cases} == set(Intent)
 

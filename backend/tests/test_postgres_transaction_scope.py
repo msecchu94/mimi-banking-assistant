@@ -1,3 +1,6 @@
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -7,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from mimi.application.conversation_context import EMPTY_CONTEXT
@@ -78,7 +81,10 @@ from mimi.infrastructure.database.models import (
     TransactionModel,
     TransferModel,
 )
-from mimi.infrastructure.database.repositories import PostgresTransferRepository
+from mimi.infrastructure.database.repositories import (
+    PostgresAccountRepository,
+    PostgresTransferRepository,
+)
 from mimi.infrastructure.database.session import create_session_factory
 from mimi.infrastructure.database.transaction import (
     PostgresRepositories,
@@ -755,6 +761,212 @@ def test_engine_correction_invalidates_the_earlier_confirmation(
     assert confirmed.result.transfer is not None
     assert confirmed.result.transfer.amount == Money(Decimal("20000.00"), Currency.ARS)
     assert financial_state(session_factory, seed) == (Decimal("130000.50"), 1, 1)
+    assert stored_flow(session_factory, seed, conversation_id) == (
+        ConversationFlowState.READY,
+        None,
+    )
+
+
+def test_engine_rejects_confirming_another_conversations_operation(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+) -> None:
+    engine = make_engine(session_factory, llm_provider)
+    llm_provider.intent = Intent.TRANSFER_MONEY
+    llm_provider.values = {"amount": "25000.00", "beneficiary_reference": "Laura"}
+    waiting: list[tuple[UUID, PendingOperation]] = []
+    for _ in range(2):
+        conversation_id = engine.start(seed.customer_id).conversation.id
+        requested = engine.handle_message(
+            seed.customer_id, conversation_id, "Transferile 25000 a Laura"
+        )
+        assert isinstance(requested.result, AwaitingConfirmationResult)
+        assert requested.result.operation.operation_id is not None
+        waiting.append((conversation_id, requested.result.operation))
+    (a_id, a_operation), (b_id, b_operation) = waiting
+    assert a_operation.operation_id is not None
+    assert b_operation.operation_id is not None
+    assert a_operation.operation_id != b_operation.operation_id
+
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    with pytest.raises(InvalidInteractionError):
+        engine.handle_interaction(
+            seed.customer_id, b_id, Confirm(a_operation.operation_id)
+        )
+
+    assert financial_state(session_factory, seed) == (Decimal("150000.50"), 0, 0)
+    for conversation_id, operation in waiting:
+        assert stored_flow(session_factory, seed, conversation_id) == (
+            ConversationFlowState.WAITING_CONFIRMATION,
+            operation,
+        )
+
+    for conversation_id, operation in waiting:
+        assert operation.operation_id is not None
+        confirmed = engine.handle_interaction(
+            seed.customer_id, conversation_id, Confirm(operation.operation_id)
+        )
+        assert isinstance(confirmed.result, OperationCompletedResult)
+        assert confirmed.result.operation == operation
+        assert stored_flow(session_factory, seed, conversation_id) == (
+            ConversationFlowState.READY,
+            None,
+        )
+    assert financial_state(session_factory, seed) == (Decimal("100000.50"), 2, 2)
+
+
+CONCURRENCY_TIMEOUT_SECONDS = 10
+
+
+def wait_for_lock_waiter(session_factory: sessionmaker[Session]) -> None:
+    """Return once a database session waits for a lock held by another."""
+    deadline = time.monotonic() + CONCURRENCY_TIMEOUT_SECONDS
+    query = text(
+        "SELECT count(*) FROM pg_stat_activity"
+        " WHERE datname = current_database()"
+        " AND cardinality(pg_blocking_pids(pid)) > 0"
+    )
+    while True:
+        with session_factory() as session:
+            if session.scalar(query):
+                return
+        assert time.monotonic() < deadline, "no session waited for a lock"
+
+
+def test_engine_concurrent_confirms_cannot_double_spend_the_source_account(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with session_factory.begin() as session:
+        session.get_one(AccountModel, seed.account_id).balance = Decimal("896480.75")
+    engine = make_engine(session_factory, llm_provider)
+
+    # Each conversation pre-validates its own transfer against the full balance.
+    llm_provider.intent = Intent.TRANSFER_MONEY
+    llm_provider.values = {"amount": "600000.00", "beneficiary_reference": "Laura"}
+    confirmations: list[tuple[UUID, Confirm]] = []
+    for _ in range(2):
+        conversation_id = engine.start(seed.customer_id).conversation.id
+        requested = engine.handle_message(
+            seed.customer_id, conversation_id, "Transferile 600000 a Laura"
+        )
+        assert isinstance(requested.result, AwaitingConfirmationResult)
+        operation_id = requested.result.operation.operation_id
+        assert operation_id is not None
+        confirmations.append((conversation_id, Confirm(operation_id)))
+    assert financial_state(session_factory, seed) == (Decimal("896480.75"), 0, 0)
+
+    # The first confirmation holds the source account lock until the second
+    # one waits for it.
+    locked = threading.Event()
+    release = threading.Event()
+    get_for_update = PostgresAccountRepository.get_for_update
+
+    def hold_first_lock(
+        self: PostgresAccountRepository, customer_id: UUID, account_id: UUID
+    ) -> Account | None:
+        account = get_for_update(self, customer_id, account_id)
+        if not locked.is_set():
+            locked.set()
+            release.wait(CONCURRENCY_TIMEOUT_SECONDS)
+        return account
+
+    monkeypatch.setattr(PostgresAccountRepository, "get_for_update", hold_first_lock)
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        try:
+            first = executor.submit(
+                engine.handle_interaction, seed.customer_id, *confirmations[0]
+            )
+            assert locked.wait(CONCURRENCY_TIMEOUT_SECONDS)
+            second = executor.submit(
+                engine.handle_interaction, seed.customer_id, *confirmations[1]
+            )
+            wait_for_lock_waiter(session_factory)
+        finally:
+            release.set()
+        completed = first.result(CONCURRENCY_TIMEOUT_SECONDS)
+        failed = second.result(CONCURRENCY_TIMEOUT_SECONDS)
+
+    assert isinstance(completed.result, OperationCompletedResult)
+    transfer = completed.result.transfer
+    assert transfer is not None
+    assert isinstance(failed.result, OperationFailedResult)
+    assert isinstance(failed.result.error, InsufficientFundsError)
+    assert financial_state(session_factory, seed) == (Decimal("296480.75"), 1, 1)
+    assert stored_state(session_factory, seed, transfer.id) == (
+        Decimal("296480.75"),
+        True,
+        True,
+    )
+    for conversation_id, _ in confirmations:
+        assert stored_flow(session_factory, seed, conversation_id) == (
+            ConversationFlowState.READY,
+            None,
+        )
+
+
+def test_engine_concurrent_duplicate_confirms_execute_the_transfer_once(
+    session_factory: sessionmaker[Session],
+    seed: Seed,
+    llm_provider: ScriptedLLMProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm_provider.error = AssertionError("interactions must not be interpreted")
+    engine = make_engine(session_factory, llm_provider)
+    conversation_id = waiting_for_transfer(session_factory, seed, engine)
+
+    # The first confirmation holds the conversation lock, while executing the
+    # transfer, until the duplicate one waits for it.
+    locked = threading.Event()
+    release = threading.Event()
+    get_for_update = PostgresAccountRepository.get_for_update
+
+    def hold_first_lock(
+        self: PostgresAccountRepository, customer_id: UUID, account_id: UUID
+    ) -> Account | None:
+        account = get_for_update(self, customer_id, account_id)
+        if not locked.is_set():
+            locked.set()
+            release.wait(CONCURRENCY_TIMEOUT_SECONDS)
+        return account
+
+    monkeypatch.setattr(PostgresAccountRepository, "get_for_update", hold_first_lock)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        try:
+            first = executor.submit(
+                engine.handle_interaction,
+                seed.customer_id,
+                conversation_id,
+                Confirm(OPERATION_ID),
+            )
+            assert locked.wait(CONCURRENCY_TIMEOUT_SECONDS)
+            second = executor.submit(
+                engine.handle_interaction,
+                seed.customer_id,
+                conversation_id,
+                Confirm(OPERATION_ID),
+            )
+            wait_for_lock_waiter(session_factory)
+        finally:
+            release.set()
+        completed = first.result(CONCURRENCY_TIMEOUT_SECONDS)
+        duplicate = second.result(CONCURRENCY_TIMEOUT_SECONDS)
+
+    assert isinstance(completed.result, OperationCompletedResult)
+    transfer = completed.result.transfer
+    assert transfer is not None
+    assert duplicate.result == NoPendingOperationResult(Confirm(OPERATION_ID))
+    assert financial_state(session_factory, seed) == (Decimal("125000.50"), 1, 1)
+    with session_factory() as session:
+        [transaction] = session.scalars(select(TransactionModel))
+        assert transaction.transfer_id == transfer.id
+        assert transaction.type is TransactionType.DEBIT
     assert stored_flow(session_factory, seed, conversation_id) == (
         ConversationFlowState.READY,
         None,

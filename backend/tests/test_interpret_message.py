@@ -232,6 +232,70 @@ def test_malformed_amounts_are_discarded_and_reported(text: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("message", "model_amount"),
+    [
+        ("Transferile -5000 pesos a Laura Gómez", "5000"),
+        ("Transferile -5000 pesos a Laura Gómez", None),
+        ("Transferile -5000 pesos a Laura Gómez", "UNSUPPORTED"),
+        ("Pasale -1 a Laura", "1"),
+        ("Pasale -$5000 a Laura", "5000"),
+        ("Pasale \u22125000 a Laura", "5000"),
+    ],
+)
+def test_stated_negative_amount_is_invalid_even_if_the_model_drops_its_sign(
+    message: str, model_amount: str | None
+) -> None:
+    result = interpret(
+        model_output(
+            intent="TRANSFER_MONEY",
+            amount=model_amount,
+            currency="ARS",
+            beneficiary_reference="Laura",
+        ),
+        message,
+    )
+
+    assert result.amount is None
+    assert result.invalid_fields == frozenset({"amount"})
+    assert result.unsupported_fields == frozenset()
+    assert result.beneficiary_reference == "Laura"
+
+
+@pytest.mark.parametrize(
+    ("message", "model_amount", "expected"),
+    [
+        ("Transferile 5000 pesos a Laura", "5000", Decimal("5000")),
+        ("Transferile 5000.50 a Laura", "5000.50", Decimal("5000.50")),
+        ("Transferile cincuenta mil a Laura", "50000", Decimal("50000")),
+        ("Pasale 50 lucas a Laura", "50000", Decimal("50000")),
+        ("Pasale 5000 a Laura, cuenta 0000-1234", "5000", Decimal("5000")),
+    ],
+)
+def test_positive_amounts_are_unaffected_by_the_negative_amount_check(
+    message: str, model_amount: str, expected: Decimal
+) -> None:
+    result = interpret(
+        model_output(intent="TRANSFER_MONEY", amount=model_amount), message
+    )
+
+    assert result.amount == expected
+    assert result.invalid_fields == frozenset()
+
+
+def test_negative_number_is_ignored_for_intents_without_amount() -> None:
+    result = interpret(model_output(intent="GET_BALANCE"), "Tengo -5000?")
+
+    assert result == Interpretation(intent=Intent.GET_BALANCE)
+
+
+def test_instructions_keep_a_stated_minus_sign() -> None:
+    llm = FakeLLMProvider(model_output())
+    InterpretMessage(llm).execute("a message")
+
+    assert '"-5000" is "-5000", never "5000"' in llm.calls[0]["instructions"]
+
+
+@pytest.mark.parametrize(
     ("intent", "field_name"),
     [
         (Intent.TRANSFER_MONEY, "amount"),
