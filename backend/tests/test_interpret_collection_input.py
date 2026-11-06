@@ -68,9 +68,10 @@ def interpret(
     output: dict[str, Any],
     operation_type: PendingOperationType = TRANSFER,
     missing: tuple[PendingField, ...] = (PendingField.AMOUNT,),
+    message: str = "a reply",
 ) -> CollectionInput | None:
     return InterpretCollectionInput(FakeLLMProvider(output)).execute(
-        "a reply", operation_type, missing
+        message, operation_type, missing
     )
 
 
@@ -105,6 +106,46 @@ def test_malformed_amount_is_discarded_and_reported(amount: str) -> None:
     result = interpret(model_output(amount=amount))
 
     assert result == CollectionInput(invalid_fields=frozenset({"amount"}))
+
+
+@pytest.mark.parametrize(
+    ("message", "model_amount"),
+    [("-5000", "5000"), ("-5000", None), ("-1 pesos", "1"), ("-$5000", "5000")],
+)
+def test_stated_negative_amount_is_invalid_even_if_the_model_drops_its_sign(
+    message: str, model_amount: str | None
+) -> None:
+    result = interpret(model_output(amount=model_amount), message=message)
+
+    assert result == CollectionInput(invalid_fields=frozenset({"amount"}))
+
+
+@pytest.mark.parametrize(
+    ("message", "model_amount", "expected"),
+    [
+        ("5000", "5000", Decimal("5000")),
+        ("5000.50", "5000.50", Decimal("5000.50")),
+        ("cincuenta mil", "50000", Decimal("50000")),
+        ("50 lucas", "50000", Decimal("50000")),
+    ],
+)
+def test_positive_amounts_are_unaffected_by_the_negative_amount_check(
+    message: str, model_amount: str, expected: Decimal
+) -> None:
+    result = interpret(model_output(amount=model_amount), message=message)
+
+    assert result == CollectionInput(amount=expected)
+
+
+def test_negative_number_is_ignored_for_card_operations() -> None:
+    result = interpret(
+        model_output(card_reference="la Visa"),
+        FREEZE_CARD,
+        (PendingField.CARD_ID,),
+        message="la Visa -4821",
+    )
+
+    assert result == CollectionInput(card_reference="la Visa")
 
 
 @pytest.mark.parametrize("field_name", ["amount", "currency"])

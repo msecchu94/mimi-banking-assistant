@@ -29,6 +29,12 @@ MAX_REFERENCE_LENGTH = 100
 # separators or special values.
 _AMOUNT_PATTERN = re.compile(r"[0-9]+(\.[0-9]{1,2})?")
 
+# A minus sign directly before a number, optionally through a currency symbol,
+# as in "-5000" or "-$5000", but not a hyphen joining words or digits.
+_NEGATIVE_AMOUNT_PATTERN = re.compile(
+    r"(?<![\w.,])[-\u2212\u2013](?:(?:US\$|U\$S|\$)\s*)?[0-9]"
+)
+
 _INSTRUCTIONS = """\
 You interpret messages sent to a banking assistant. Classify the message into \
 exactly one intent and extract only the fields stated in the message.
@@ -104,7 +110,7 @@ separators by the message's language: in Spanish "25.000" is "25000" and \
 "25.000,50" is "25000.50"; in English "25,000.50" is "25000.50". Convert \
 clear written or slang amounts: "cinco mil" is "5000", "5 lucas" is "5000", \
 "una luca y media" is "1500", "un palo" is "1000000", "medio palo" is \
-"500000".
+"500000". Keep a stated minus sign: "-5000" is "-5000", never "5000".
 - currency: ARS for "ARS", "pesos" or "mangos"; USD for "USD", "US$", "U$S", \
 "dollars", "dólares" or "verdes". Use null when no currency is named, \
 including a bare "$" and words such as "money", "plata" or "guita".
@@ -255,7 +261,7 @@ class InterpretMessage:
             input_text=message,
             output_type=_RawInterpretation,
         )
-        return _validate(raw)
+        return _validate(raw, message)
 
 
 _COLLECTION_INSTRUCTIONS = """\
@@ -301,7 +307,8 @@ without currency symbols or thousands separators. Example: "25000.50". Read \
 separators by the message's language: in Spanish "25.000" is "25000" and \
 "25.000,50" is "25000.50"; in English "25,000.50" is "25000.50". Convert \
 clear written or slang amounts: "cinco mil" is "5000", "5 lucas" is "5000", \
-"un palo" is "1000000".""",
+"un palo" is "1000000". Keep a stated minus sign: "-5000" is "-5000", never \
+"5000".""",
     "currency": """\
 - currency: ARS for "ARS", "pesos" or "mangos"; USD for "USD", "US$", "U$S", \
 "dollars", "dólares" or "verdes". Use null when no currency is named, \
@@ -394,7 +401,7 @@ class InterpretCollectionInput:
             input_text=message,
             output_type=_RawCollectionInput,
         )
-        return _validate_collection(raw, operation_type)
+        return _validate_collection(raw, operation_type, message)
 
 
 def _collection_instructions(
@@ -412,7 +419,7 @@ def _collection_instructions(
 
 
 def _validate_collection(
-    raw: _RawCollectionInput, operation_type: PendingOperationType
+    raw: _RawCollectionInput, operation_type: PendingOperationType, message: str
 ) -> CollectionInput | None:
     if raw.kind is _CollectionKind.OTHER:
         return None
@@ -430,7 +437,9 @@ def _validate_collection(
     if isinstance(currency, _Unsupported):
         unsupported.add("currency")
     return CollectionInput(
-        amount=_validated_amount(pick("amount", raw.amount), invalid, unsupported),
+        amount=_validated_amount(
+            "amount" in allowed, raw.amount, message, invalid, unsupported
+        ),
         currency=currency if isinstance(currency, Currency) else None,
         beneficiary_reference=reference(
             "beneficiary_reference", raw.beneficiary_reference
@@ -442,7 +451,7 @@ def _validate_collection(
     )
 
 
-def _validate(raw: _RawInterpretation) -> Interpretation | FollowUp:
+def _validate(raw: _RawInterpretation, message: str) -> Interpretation | FollowUp:
     allowed = (
         _FOLLOW_UP_FIELDS
         if isinstance(raw.intent, _FollowUp)
@@ -475,7 +484,9 @@ def _validate(raw: _RawInterpretation) -> Interpretation | FollowUp:
                 return None
         return picked
 
-    amount = _validated_amount(pick("amount", raw.amount), invalid, unsupported)
+    amount = _validated_amount(
+        "amount" in allowed, raw.amount, message, invalid, unsupported
+    )
 
     def reference(name: str, value: str | None) -> str | None:
         return _validated_reference(name, pick(name, value), invalid)
@@ -534,8 +545,19 @@ def _follow_up(
 
 
 def _validated_amount(
-    text: str | None, invalid: set[str], unsupported: set[str]
+    allowed: bool,
+    text: str | None,
+    message: str,
+    invalid: set[str],
+    unsupported: set[str],
 ) -> Decimal | None:
+    if not allowed:
+        return None
+    # The model may drop the sign of a negative amount, which must never become
+    # a valid one, so the message itself is checked.
+    if _NEGATIVE_AMOUNT_PATTERN.search(message):
+        invalid.add("amount")
+        return None
     if text is None:
         return None
     if text.strip() == _Unsupported.UNSUPPORTED:
