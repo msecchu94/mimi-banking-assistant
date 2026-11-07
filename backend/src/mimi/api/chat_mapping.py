@@ -80,9 +80,17 @@ from mimi.application.pending_operations import (
 from mimi.application.use_cases.analyze_expenses import ExpenseAnalysis, Period
 from mimi.application.use_cases.compare_expenses import ExpenseComparison
 from mimi.domain import entities
-from mimi.domain.enums import CardBrand, CardStatus, CardType, PendingOperationType
+from mimi.domain.enums import (
+    CardBrand,
+    CardStatus,
+    CardType,
+    Currency,
+    PendingOperationType,
+)
 
 _CENT = Decimal("0.01")
+# Amounts in messages read as on the client, e.g. `$ 20.000,00`.
+_CURRENCY_SYMBOLS = {Currency.ARS: "$", Currency.USD: "US$"}
 
 _CARD_BRANDS = {CardBrand.VISA: "Visa", CardBrand.MASTERCARD: "Mastercard"}
 _CARD_TYPES = {CardType.DEBIT: "débito", CardType.CREDIT: "crédito"}
@@ -273,7 +281,13 @@ def _money(money: entities.Money) -> Money:
 
 
 def _money_text(money: entities.Money) -> str:
-    return f"{money.amount.quantize(_CENT):f} {money.currency}"
+    """``money`` for a message, e.g. ``$ 20.000,00``, ``US$ 1.200,00`` or
+    ``−$ 50,00``."""
+    amount = money.amount.quantize(_CENT)
+    whole, cents = f"{abs(amount):f}".split(".")
+    grouped = f"{int(whole):,}".replace(",", ".")
+    sign = "−" if amount < 0 else ""
+    return f"{sign}{_CURRENCY_SYMBOLS[money.currency]} {grouped},{cents}"
 
 
 def _period(period: Period, timezone: ZoneInfo) -> ExpensePeriod:
