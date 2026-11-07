@@ -1980,6 +1980,8 @@ def test_confirm_discards_a_card_operation_that_fails_revalidation(
     assert isinstance(turn.result, OperationFailedResult)
     assert turn.result.operation == operation
     assert isinstance(turn.result.error, InvalidCardStateError)
+    # The card is reported as currently stored, so the reply can name it.
+    assert turn.result.card == card
     assert card_status(scope, card.id) is card.status
     assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
 
@@ -2168,6 +2170,7 @@ def test_selected_card_that_fails_pre_validation_is_discarded(
     assert turn.flow_state is ConversationFlowState.READY
     assert isinstance(turn.result, PreValidationFailedResult)
     assert isinstance(turn.result.error, InvalidCardStateError)
+    assert turn.result.card == VISA_CREDIT
     assert stored_state(scope, conversation_id) == (ConversationFlowState.READY, None)
 
 

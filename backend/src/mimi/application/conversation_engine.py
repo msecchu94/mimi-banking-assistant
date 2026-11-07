@@ -18,6 +18,7 @@ from mimi.application.errors import (
     ApplicationError,
     ConversationClosedError,
     ConversationNotFoundError,
+    InvalidCardStateError,
     InvalidConversationStateError,
     InvalidInteractionError,
 )
@@ -464,6 +465,17 @@ def _execute(
             case UnfreezeCardOperationData(card_id=UUID() as card_id):
                 card = UnfreezeCard(repositories.cards).execute(customer_id, card_id)
                 return OperationCompletedResult(operation, card=card)
+    except InvalidCardStateError as error:
+        # Nothing was written; the card is read so the user can be told which
+        # card it is and its current state.
+        match operation.data:
+            case (
+                FreezeCardOperationData(card_id=UUID() as card_id)
+                | UnfreezeCardOperationData(card_id=UUID() as card_id)
+            ):
+                current = repositories.cards.get(customer_id, card_id)
+                return OperationFailedResult(operation, error, card=current)
+        return OperationFailedResult(operation, error)
     except ApplicationError as error:
         return OperationFailedResult(operation, error)
     raise AssertionError("an operation waiting for confirmation is complete")

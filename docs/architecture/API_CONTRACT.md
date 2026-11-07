@@ -1107,7 +1107,11 @@ business, validation, resource, or state error, the API returns the
 corresponding non-success HTTP response.
 
 An operation that fails pre-validation or revalidation is discarded without
-being executed, so no operation is pending afterwards. A state-changing
+being executed, so no operation is pending afterwards.
+
+Exception: a card freeze or unfreeze for a card already in the requested
+state is answered conversationally, not as an error: `2xx` `ChatResponse`
+with `conversation_state: READY` and `ui.type: TEXT`. A state-changing
 request made while another operation is pending returns
 `409 PENDING_OPERATION_CONFLICT`; the pending operation is unchanged.
 

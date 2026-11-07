@@ -215,7 +215,7 @@ def test_valid_card_transition_awaits_confirmation(
 
 
 @pytest.mark.parametrize(
-    ("operation", "error"),
+    ("operation", "error", "card"),
     [
         (
             PendingOperation(
@@ -223,6 +223,7 @@ def test_valid_card_transition_awaits_confirmation(
                 FreezeCardOperationData(FROZEN_CARD.id),
             ),
             InvalidCardStateError,
+            FROZEN_CARD,
         ),
         (
             PendingOperation(
@@ -230,23 +231,27 @@ def test_valid_card_transition_awaits_confirmation(
                 UnfreezeCardOperationData(ACTIVE_CARD.id),
             ),
             InvalidCardStateError,
+            ACTIVE_CARD,
         ),
         (
             PendingOperation(
                 PendingOperationType.FREEZE_CARD, FreezeCardOperationData(uuid4())
             ),
             CardNotFoundError,
+            None,
         ),
     ],
     ids=["already_frozen", "not_frozen", "unknown"],
 )
 def test_invalid_card_transition_fails_with_its_semantic_error(
-    operation: PendingOperation, error: type[ApplicationError]
+    operation: PendingOperation, error: type[ApplicationError], card: Card | None
 ) -> None:
     result = pre_validate(FakeRepositories(), CUSTOMER_ID, operation)
 
     assert isinstance(result, PreValidationFailedResult)
     assert isinstance(result.error, error)
+    # A card in the wrong state is kept so the reply can name it.
+    assert result.card == card
 
 
 @pytest.mark.parametrize(

@@ -6,13 +6,14 @@ now waits for confirmation. Passing does not authorize execution: the Use
 Case revalidates after confirmation. Nothing is written.
 """
 
+from collections.abc import Callable
 from uuid import UUID
 
 from mimi.application.conversation_results import (
     AwaitingConfirmationResult,
     PreValidationFailedResult,
 )
-from mimi.application.errors import ApplicationError
+from mimi.application.errors import ApplicationError, InvalidCardStateError
 from mimi.application.pending_operations import (
     FreezeCardOperationData,
     PendingOperation,
@@ -23,6 +24,7 @@ from mimi.application.repositories import Repositories
 from mimi.application.use_cases.execute_transfer import validate_transfer
 from mimi.application.use_cases.freeze_card import ensure_can_freeze
 from mimi.application.use_cases.unfreeze_card import ensure_can_unfreeze
+from mimi.domain.entities import Card
 
 
 def pre_validate(
@@ -54,11 +56,30 @@ def pre_validate(
                     operation, source_account=account, beneficiary=beneficiary
                 )
             case FreezeCardOperationData(card_id=UUID() as card_id):
-                card = ensure_can_freeze(repositories.cards.get(customer_id, card_id))
-                return AwaitingConfirmationResult(operation, card=card)
+                return _pre_validate_card(
+                    operation,
+                    repositories.cards.get(customer_id, card_id),
+                    ensure_can_freeze,
+                )
             case UnfreezeCardOperationData(card_id=UUID() as card_id):
-                card = ensure_can_unfreeze(repositories.cards.get(customer_id, card_id))
-                return AwaitingConfirmationResult(operation, card=card)
+                return _pre_validate_card(
+                    operation,
+                    repositories.cards.get(customer_id, card_id),
+                    ensure_can_unfreeze,
+                )
     except ApplicationError as error:
         return PreValidationFailedResult(operation, error)
     raise AssertionError("a complete operation has all its data")
+
+
+def _pre_validate_card(
+    operation: PendingOperation,
+    card: Card | None,
+    ensure: Callable[[Card | None], Card],
+) -> AwaitingConfirmationResult | PreValidationFailedResult:
+    """Check ``card`` with the Use Case's rule; a card in the wrong state is
+    kept in the failure so the user can be told which card it is."""
+    try:
+        return AwaitingConfirmationResult(operation, card=ensure(card))
+    except InvalidCardStateError as error:
+        return PreValidationFailedResult(operation, error, card=card)

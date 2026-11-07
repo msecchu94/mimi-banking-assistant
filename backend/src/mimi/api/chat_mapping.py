@@ -66,7 +66,10 @@ from mimi.application.conversation_results import (
     TurnResult,
     UnhandledIntentResult,
 )
-from mimi.application.errors import PendingOperationConflictError
+from mimi.application.errors import (
+    InvalidCardStateError,
+    PendingOperationConflictError,
+)
 from mimi.application.interactions import Confirm
 from mimi.application.interpretation import Intent
 from mimi.application.pending_operations import (
@@ -92,6 +95,12 @@ _CARD_TITLES = {
     PendingOperationType.UNFREEZE_CARD: "Descongelar tarjeta",
 }
 _CARD_STATUSES = {CardStatus.FROZEN: "congelada", CardStatus.ACTIVE: "activa"}
+# A card operation rejected because the card is already in the requested
+# state is answered conversationally, from the card's persisted status.
+_CARD_ALREADY = {
+    (PendingOperationType.FREEZE_CARD, CardStatus.FROZEN): "bloqueada",
+    (PendingOperationType.UNFREEZE_CARD, CardStatus.ACTIVE): "activa",
+}
 _OPERATIONS = {
     PendingOperationType.TRANSFER: "la transferencia",
     PendingOperationType.FREEZE_CARD: "el congelamiento de la tarjeta",
@@ -134,7 +143,8 @@ def present_turn(
 
     Raises the result's ``ApplicationError`` when the operation could not be
     performed, and ``PendingOperationConflictError`` when another operation
-    is pending.
+    is pending. A card that is already in the requested state is not an
+    error: the user is told so.
     """
     message, ui = _present(turn.result, timezone)
     return ChatResponse(
@@ -219,6 +229,23 @@ def _present(result: TurnResult, timezone: ZoneInfo) -> tuple[str, UiResponse]:
             return _collecting_card(result)
         case AwaitingConfirmationResult():
             return _awaiting_confirmation(result)
+        case (
+            PreValidationFailedResult(
+                operation=operation,
+                error=InvalidCardStateError(),
+                card=entities.Card() as card,
+            )
+            | OperationFailedResult(
+                operation=operation,
+                error=InvalidCardStateError(),
+                card=entities.Card() as card,
+            )
+        ) if (operation.type, card.status) in _CARD_ALREADY:
+            return (
+                f"Tu {_CARD_BRANDS[card.brand]} terminada en {card.last_four} "
+                f"ya está {_CARD_ALREADY[operation.type, card.status]}.",
+                TextUi(),
+            )
         case (
             PreValidationFailedResult(error=error) | OperationFailedResult(error=error)
         ):
