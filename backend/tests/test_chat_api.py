@@ -145,6 +145,23 @@ TRANSFER_TO_LAURA = PendingOperation(
 FREEZE_VISA = PendingOperation(
     PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_DEBIT.id)
 )
+VISA_FROZEN = Card(
+    uuid4(), SAVINGS.id, CardType.DEBIT, CardBrand.VISA, "9134", CardStatus.FROZEN
+)
+MASTER_ACTIVE = Card(
+    uuid4(),
+    SAVINGS.id,
+    CardType.CREDIT,
+    CardBrand.MASTERCARD,
+    "5307",
+    CardStatus.ACTIVE,
+)
+FREEZE_FROZEN_VISA = PendingOperation(
+    PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_FROZEN.id)
+)
+UNFREEZE_ACTIVE_MASTER = PendingOperation(
+    PendingOperationType.UNFREEZE_CARD, UnfreezeCardOperationData(MASTER_ACTIVE.id)
+)
 OCTOBER = Period(
     datetime(2026, 10, 1, tzinfo=BUENOS_AIRES),
     datetime(2026, 11, 1, tzinfo=BUENOS_AIRES),
@@ -799,6 +816,46 @@ PRESENTATIONS = [
         "No hay ninguna operación pendiente para cancelar.",
         {"type": "TEXT", "data": {}},
     ),
+    (
+        "pre_validation_card_already_frozen",
+        PreValidationFailedResult(
+            FREEZE_FROZEN_VISA, InvalidCardStateError(), card=VISA_FROZEN
+        ),
+        Intent.FREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu Visa terminada en 9134 ya está bloqueada.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "pre_validation_card_already_active",
+        PreValidationFailedResult(
+            UNFREEZE_ACTIVE_MASTER, InvalidCardStateError(), card=MASTER_ACTIVE
+        ),
+        Intent.UNFREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu Mastercard terminada en 5307 ya está activa.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "revalidation_card_already_frozen",
+        OperationFailedResult(
+            FREEZE_FROZEN_VISA, InvalidCardStateError(), card=VISA_FROZEN
+        ),
+        Intent.FREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu Visa terminada en 9134 ya está bloqueada.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "revalidation_card_already_active",
+        OperationFailedResult(
+            UNFREEZE_ACTIVE_MASTER, InvalidCardStateError(), card=MASTER_ACTIVE
+        ),
+        Intent.UNFREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu Mastercard terminada en 5307 ya está activa.",
+        {"type": "TEXT", "data": {}},
+    ),
 ]
 
 
@@ -897,6 +954,16 @@ def test_failed_operations_are_error_responses(
 
     assert response.status_code == status
     assert response.json()["code"] == code
+
+
+def test_card_state_failure_without_its_card_stays_an_error(
+    chat_client: TestClient, stub: StubEngine
+) -> None:
+    stub.result = PreValidationFailedResult(FREEZE_FROZEN_VISA, InvalidCardStateError())
+
+    response = post_message(chat_client)
+
+    assert_api_error(response, 409, "INVALID_CARD_STATE")
 
 
 # Errors.
