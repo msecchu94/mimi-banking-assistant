@@ -25,14 +25,14 @@ class HomeHeader extends StatelessWidget {
             children: [
               Text(
                 'Hola, $firstName',
-                style: MimiTypography.titleLarge.copyWith(
+                style: MimiTypography.headlineMedium.copyWith(
                   color: MimiColors.textPrimary,
                 ),
               ),
               const SizedBox(height: MimiSpacing.xs),
               Text(
                 accountDescription,
-                style: MimiTypography.labelMedium.copyWith(
+                style: MimiTypography.bodyMedium.copyWith(
                   color: MimiColors.textSecondary,
                 ),
               ),

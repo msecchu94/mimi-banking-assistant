@@ -50,7 +50,7 @@ void main() {
       'Tarjetas',
       _data.account.title,
       _data.account.status,
-      'Alias de tu cuenta',
+      'Alias:',
       _data.account.alias,
       'Ver datos',
       'Movimientos',
@@ -96,6 +96,36 @@ void main() {
     expect(credit.style?.color, MimiColors.success);
     expect(find.text(r'− $ 32.480,50'), findsOneWidget);
     expect(find.text(r'− $ 18.900,00'), findsOneWidget);
+  });
+
+  testWidgets('marks each transaction with its category icon', (tester) async {
+    await _pumpHome(tester);
+
+    for (final (title, icon) in [
+      ('Supermercado Día', Icons.shopping_cart_outlined),
+      ('Martín López', Icons.swap_horiz),
+      ('Personal', Icons.receipt_long_outlined),
+    ]) {
+      final row = find.ancestor(
+        of: find.text(title),
+        matching: find.byType(Row),
+      );
+      expect(
+        find.descendant(of: row.first, matching: find.byIcon(icon)),
+        findsOneWidget,
+        reason: title,
+      );
+    }
+  });
+
+  testWidgets('shows no account data the summary does not carry', (
+    tester,
+  ) async {
+    await _pumpHome(tester);
+
+    expect(find.textContaining('CBU'), findsNothing);
+    expect(find.byIcon(Icons.copy), findsNothing);
+    expect(find.byIcon(Icons.copy_outlined), findsNothing);
   });
 
   testWidgets('groups the transactions in one container', (tester) async {

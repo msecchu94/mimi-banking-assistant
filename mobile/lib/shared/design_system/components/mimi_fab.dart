@@ -12,14 +12,15 @@ import '../mimi_typography.dart';
 class MimiFab extends StatelessWidget {
   const MimiFab({super.key, required this.onPressed});
 
-  /// Provisional glow (DESIGN_SYSTEM.md §14.4): `primary` at 24%, 24 px blur,
-  /// no offset or spread. Scoped to this component; not a global token.
-  static const _glow = BoxShadow(color: Color(0x3D19C6B3), blurRadius: 24);
+  /// Provisional glow (DESIGN_SYSTEM.md §14.4): `primary` at ~30%, 24 px
+  /// blur, no offset or spread. Scoped to this component; not a global token.
+  static const _glow = BoxShadow(color: Color(0x4D19C6B3), blurRadius: 24);
 
   /// Provisional glass recipe (DESIGN_SYSTEM.md §14.1, §14.3): ~24 px
-  /// background blur and a 1 px border of `textPrimary` at ~6%.
+  /// background blur and a 1 px `mimiCyan` border at ~40%, the subtle cyan
+  /// edge that marks Mimi's entry point.
   static const _blurSigma = 12.0;
-  static const _border = BorderSide(color: Color(0x0FF4F8F8));
+  static const _border = BorderSide(color: Color(0x6622D3C5));
 
   final VoidCallback onPressed;
 
@@ -45,14 +46,14 @@ class MimiFab extends StatelessWidget {
                 ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: MimiSpacing.lg,
+                    horizontal: MimiSpacing.xl,
                   ),
                   child: Center(
                     widthFactor: 1,
                     heightFactor: 1,
                     child: Text(
                       '✦ Mimi',
-                      style: MimiTypography.labelLarge.copyWith(
+                      style: MimiTypography.titleMedium.copyWith(
                         color: MimiColors.primaryBright,
                       ),
                     ),
