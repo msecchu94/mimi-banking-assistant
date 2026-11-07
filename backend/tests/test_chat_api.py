@@ -335,8 +335,8 @@ PRESENTATIONS = [
         BalancesResult((SAVINGS, DOLLARS)),
         Intent.GET_BALANCE,
         ConversationFlowState.READY,
-        "Estos son tus saldos: Caja de ahorro: 150000.50 ARS; "
-        "Cuenta en dólares: 1200.00 USD.",
+        "Estos son tus saldos: Caja de ahorro: $ 150.000,50; "
+        "Cuenta en dólares: US$ 1.200,00.",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -344,7 +344,7 @@ PRESENTATIONS = [
         BalancesResult((SAVINGS,)),
         Intent.GET_BALANCE,
         ConversationFlowState.READY,
-        "El saldo de Caja de ahorro es 150000.50 ARS.",
+        "El saldo de Caja de ahorro es $ 150.000,50.",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -415,7 +415,7 @@ PRESENTATIONS = [
         ),
         Intent.ANALYZE_EXPENSES,
         ConversationFlowState.READY,
-        "Tus gastos del período suman 85000.00 ARS y 120.00 USD.",
+        "Tus gastos del período suman $ 85.000,00 y US$ 120,00.",
         {
             "type": "EXPENSE_SUMMARY",
             "data": {
@@ -480,8 +480,8 @@ PRESENTATIONS = [
         ),
         Intent.COMPARE_EXPENSES,
         ConversationFlowState.READY,
-        "Respecto del período comparado, en ARS gastaste 25000.00 ARS más y "
-        "en USD gastaste 40.00 USD menos.",
+        "Respecto del período comparado, en ARS gastaste $ 25.000,00 más y "
+        "en USD gastaste US$ 40,00 menos.",
         {
             "type": "EXPENSE_COMPARISON",
             "data": {
@@ -524,7 +524,7 @@ PRESENTATIONS = [
         ),
         Intent.COMPARE_EXPENSES,
         ConversationFlowState.READY,
-        "Respecto del período comparado, en ARS gastaste 31339.25 ARS menos.",
+        "Respecto del período comparado, en ARS gastaste $ 31.339,25 menos.",
         {
             "type": "EXPENSE_COMPARISON",
             "data": {
@@ -695,7 +695,7 @@ PRESENTATIONS = [
         ),
         Intent.TRANSFER_MONEY,
         ConversationFlowState.COLLECTING_DATA,
-        "El monto de 25000.00 ARS no corresponde a la moneda de la cuenta "
+        "El monto de $ 25.000,00 no corresponde a la moneda de la cuenta "
         "elegida (USD). ¿Cuánto querés transferir?",
         {"type": "TEXT", "data": {}},
     ),
@@ -706,7 +706,7 @@ PRESENTATIONS = [
         ),
         Intent.TRANSFER_MONEY,
         ConversationFlowState.WAITING_CONFIRMATION,
-        "¿Confirmás la transferencia de 25000.00 ARS a Laura desde Caja de ahorro?",
+        "¿Confirmás la transferencia de $ 25.000,00 a Laura desde Caja de ahorro?",
         {
             "type": "CONFIRMATION",
             "data": {
@@ -767,7 +767,7 @@ PRESENTATIONS = [
         ),
         Intent.TRANSFER_MONEY,
         ConversationFlowState.READY,
-        "La transferencia de 25000.00 ARS a Laura se realizó con éxito.",
+        "La transferencia de $ 25.000,00 a Laura se realizó con éxito.",
         {
             "type": "TRANSFER_SUMMARY",
             "data": {
@@ -916,6 +916,31 @@ def test_periods_are_presented_as_local_days(
         "from": "2026-10-01",
         "to": "2026-10-31",
     }
+
+
+@pytest.mark.parametrize(
+    ("balance", "text"),
+    [
+        (Money(Decimal("0"), Currency.ARS), "$ 0,00"),
+        (Money(Decimal("999.9"), Currency.ARS), "$ 999,90"),
+        (Money(Decimal("1000"), Currency.ARS), "$ 1.000,00"),
+        (Money(Decimal("20000.00"), Currency.ARS), "$ 20.000,00"),
+        (Money(Decimal("1234567.891"), Currency.ARS), "$ 1.234.567,89"),
+        (Money(Decimal("-1500.5"), Currency.ARS), "−$ 1.500,50"),
+        (Money(Decimal("1200"), Currency.USD), "US$ 1.200,00"),
+        (Money(Decimal("-25"), Currency.USD), "−US$ 25,00"),
+    ],
+)
+def test_amounts_in_messages_are_formatted_for_display(
+    chat_client: TestClient, stub: StubEngine, balance: Money, text: str
+) -> None:
+    account = Account(uuid4(), CUSTOMER_ID, "Cuenta", balance, AccountStatus.ACTIVE)
+    stub.result = BalancesResult((account,))
+    stub.intent = Intent.GET_BALANCE
+
+    response = post_message(chat_client)
+
+    assert response.json()["message"] == f"El saldo de Cuenta es {text}."
 
 
 @pytest.mark.parametrize(
