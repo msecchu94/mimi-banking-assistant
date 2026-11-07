@@ -31,16 +31,21 @@ class HomeAccountSummary {
   final String alias;
 }
 
+/// What a transaction was for; Home only uses it to pick the row's icon.
+enum HomeTransactionCategory { groceries, transfer, services }
+
 class HomeTransaction {
   const HomeTransaction({
     required this.title,
     required this.detail,
     required this.amount,
     required this.isCredit,
+    required this.category,
   });
 
   final String title;
   final String detail;
+  final HomeTransactionCategory category;
 
   /// Unsigned display amount; the sign is derived from [isCredit].
   final String amount;
@@ -63,18 +68,21 @@ const homeMockData = HomeViewData(
       detail: 'Hoy, 12:42 · Débito',
       amount: r'$ 32.480,50',
       isCredit: false,
+      category: HomeTransactionCategory.groceries,
     ),
     HomeTransaction(
       title: 'Martín López',
       detail: 'Hoy, 10:18 · Recibida',
       amount: r'$ 85.000,00',
       isCredit: true,
+      category: HomeTransactionCategory.transfer,
     ),
     HomeTransaction(
       title: 'Personal',
       detail: 'Ayer, 18:05 · Servicio',
       amount: r'$ 18.900,00',
       isCredit: false,
+      category: HomeTransactionCategory.services,
     ),
   ],
 );

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../shared/design_system/components/mimi_icon_button.dart';
+import '../../../../shared/design_system/components/mimi_card.dart';
 import '../../../../shared/design_system/mimi_tokens.dart';
 import '../../../../shared/design_system/mimi_typography.dart';
 
@@ -41,17 +41,13 @@ class BalanceSection extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: MimiSpacing.sm),
-            MimiIconButton(
-              icon: isHidden
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined,
-              semanticLabel: isHidden ? 'Mostrar saldo' : 'Ocultar saldo',
+            const SizedBox(width: MimiSpacing.xs),
+            _VisibilityToggle(
+              isHidden: isHidden,
               onPressed: onToggleVisibility,
             ),
           ],
         ),
-        const SizedBox(height: MimiSpacing.xs),
         // The balance keeps displayLarge on common widths. It only scales
         // down when it cannot fit on one line (very narrow widths or large
         // text scales), so digits are never wrapped or truncated.
@@ -67,6 +63,56 @@ class BalanceSection extends StatelessWidget {
               : Text(balance, style: amountStyle),
         ),
       ],
+    );
+  }
+}
+
+/// A compact pill that stays secondary to the balance, while its
+/// interactive area keeps the 48 px minimum touch target.
+class _VisibilityToggle extends StatelessWidget {
+  const _VisibilityToggle({required this.isHidden, required this.onPressed});
+
+  static const _pillSize = Size(40, 30);
+  static const _iconSize = 18.0;
+
+  final bool isHidden;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: isHidden ? 'Mostrar saldo' : 'Ocultar saldo',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: onPressed,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox.square(
+          dimension: MimiSpacing.minTouchTarget,
+          child: Center(
+            child: Material(
+              color: MimiColors.surfaceElevated,
+              shape: const StadiumBorder(
+                side: BorderSide(color: MimiCard.outlineColor),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onPressed,
+                child: SizedBox.fromSize(
+                  size: _pillSize,
+                  child: Icon(
+                    isHidden
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    size: _iconSize,
+                    color: MimiColors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
