@@ -171,6 +171,15 @@ SEPTEMBER = Period(
     datetime(2026, 10, 1, tzinfo=BUENOS_AIRES),
 )
 
+JANUARY_2026 = Period(
+    datetime(2026, 1, 1, tzinfo=BUENOS_AIRES),
+    datetime(2026, 2, 1, tzinfo=BUENOS_AIRES),
+)
+DECEMBER_2025 = Period(
+    datetime(2025, 12, 1, tzinfo=BUENOS_AIRES),
+    datetime(2026, 1, 1, tzinfo=BUENOS_AIRES),
+)
+
 
 def ars(amount: str) -> dict[str, str]:
     return {"amount": amount, "currency": "ARS"}
@@ -415,7 +424,7 @@ PRESENTATIONS = [
         ),
         Intent.ANALYZE_EXPENSES,
         ConversationFlowState.READY,
-        "Tus gastos del período suman $ 85.000,00 y US$ 120,00.",
+        "En octubre gastaste $ 85.000,00 y US$ 120,00.",
         {
             "type": "EXPENSE_SUMMARY",
             "data": {
@@ -480,8 +489,7 @@ PRESENTATIONS = [
         ),
         Intent.COMPARE_EXPENSES,
         ConversationFlowState.READY,
-        "Respecto del período comparado, en ARS gastaste $ 25.000,00 más y "
-        "en USD gastaste US$ 40,00 menos.",
+        "En octubre gastaste $ 25.000,00 más y US$ 40,00 menos que en septiembre.",
         {
             "type": "EXPENSE_COMPARISON",
             "data": {
@@ -524,7 +532,7 @@ PRESENTATIONS = [
         ),
         Intent.COMPARE_EXPENSES,
         ConversationFlowState.READY,
-        "Respecto del período comparado, en ARS gastaste $ 31.339,25 menos.",
+        "En octubre gastaste $ 31.339,25 menos que en septiembre.",
         {
             "type": "EXPENSE_COMPARISON",
             "data": {
@@ -537,6 +545,80 @@ PRESENTATIONS = [
                         "previous_total": ars("323251.25"),
                         "difference": ars("31339.25"),
                         "change": "DECREASE",
+                    },
+                ],
+            },
+        },
+    ),
+    (
+        "expense_comparison_unchanged",
+        ExpenseComparisonResult(
+            ExpenseComparison(
+                ExpenseAnalysis(OCTOBER, None, ()),
+                ExpenseAnalysis(SEPTEMBER, None, ()),
+                (
+                    CurrencyComparison(
+                        Currency.ARS,
+                        Money(Decimal("160000.00"), Currency.ARS),
+                        Money(Decimal("160000.00"), Currency.ARS),
+                        Money(Decimal("0.00"), Currency.ARS),
+                        ExpenseChange.UNCHANGED,
+                    ),
+                ),
+            )
+        ),
+        Intent.COMPARE_EXPENSES,
+        ConversationFlowState.READY,
+        "En octubre gastaste lo mismo ($ 160.000,00) que en septiembre.",
+        {
+            "type": "EXPENSE_COMPARISON",
+            "data": {
+                "category": None,
+                "current_period": {"from": "2026-10-01", "to": "2026-10-31"},
+                "previous_period": {"from": "2026-09-01", "to": "2026-09-30"},
+                "currencies": [
+                    {
+                        "current_total": ars("160000.00"),
+                        "previous_total": ars("160000.00"),
+                        "difference": ars("0.00"),
+                        "change": "UNCHANGED",
+                    },
+                ],
+            },
+        },
+    ),
+    (
+        "expense_comparison_cross_year",
+        ExpenseComparisonResult(
+            ExpenseComparison(
+                ExpenseAnalysis(JANUARY_2026, None, ()),
+                ExpenseAnalysis(DECEMBER_2025, None, ()),
+                (
+                    CurrencyComparison(
+                        Currency.ARS,
+                        Money(Decimal("185000.00"), Currency.ARS),
+                        Money(Decimal("160000.00"), Currency.ARS),
+                        Money(Decimal("25000.00"), Currency.ARS),
+                        ExpenseChange.INCREASE,
+                    ),
+                ),
+            )
+        ),
+        Intent.COMPARE_EXPENSES,
+        ConversationFlowState.READY,
+        "En enero de 2026 gastaste $ 25.000,00 más que en diciembre de 2025.",
+        {
+            "type": "EXPENSE_COMPARISON",
+            "data": {
+                "category": None,
+                "current_period": {"from": "2026-01-01", "to": "2026-01-31"},
+                "previous_period": {"from": "2025-12-01", "to": "2025-12-31"},
+                "currencies": [
+                    {
+                        "current_total": ars("185000.00"),
+                        "previous_total": ars("160000.00"),
+                        "difference": ars("25000.00"),
+                        "change": "INCREASE",
                     },
                 ],
             },
