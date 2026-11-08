@@ -637,7 +637,7 @@ PRESENTATIONS = [
         ),
         Intent.FREEZE_CARD,
         ConversationFlowState.COLLECTING_DATA,
-        "¿Qué tarjeta querés congelar?",
+        "¿Qué tarjeta querés bloquear?",
         {
             "type": "CARD_SELECTOR",
             "data": {"cards": [card_json(VISA_DEBIT), card_json(MASTER_CREDIT)]},
@@ -652,7 +652,7 @@ PRESENTATIONS = [
         ),
         Intent.UNFREEZE_CARD,
         ConversationFlowState.COLLECTING_DATA,
-        "¿Qué tarjeta querés descongelar?",
+        "¿Qué tarjeta querés desbloquear?",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -665,7 +665,7 @@ PRESENTATIONS = [
         ),
         Intent.FREEZE_CARD,
         ConversationFlowState.COLLECTING_DATA,
-        "No encontré esa tarjeta. ¿Qué tarjeta querés congelar?",
+        "No encontré esa tarjeta. ¿Qué tarjeta querés bloquear?",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -736,12 +736,12 @@ PRESENTATIONS = [
         ),
         Intent.FREEZE_CARD,
         ConversationFlowState.WAITING_CONFIRMATION,
-        "¿Confirmás que querés congelar la tarjeta Visa de débito terminada en 4821?",
+        "¿Confirmás que querés bloquear la tarjeta Visa de débito terminada en 4821?",
         {
             "type": "CONFIRMATION",
             "data": {
                 "operation_id": str(OPERATION_ID),
-                "title": "Congelar tarjeta",
+                "title": "Bloquear tarjeta",
                 "summary": {"type": "CARD", "card": card_json(VISA_DEBIT)},
                 "actions": [
                     {"type": "CONFIRM", "label": "Confirmar"},
@@ -786,11 +786,25 @@ PRESENTATIONS = [
         ),
         Intent.FREEZE_CARD,
         ConversationFlowState.READY,
-        "Tu tarjeta Visa de débito terminada en 4821 quedó congelada.",
+        "Tu tarjeta Visa de débito terminada en 4821 quedó bloqueada.",
         {
             "type": "CARD_LIST",
             "data": {"cards": [{**card_json(VISA_DEBIT), "status": "FROZEN"}]},
         },
+    ),
+    (
+        "card_unfreeze_completed",
+        OperationCompletedResult(
+            PendingOperation(
+                PendingOperationType.UNFREEZE_CARD,
+                UnfreezeCardOperationData(MASTER_ACTIVE.id),
+            ),
+            card=MASTER_ACTIVE,
+        ),
+        Intent.UNFREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu tarjeta Mastercard de crédito terminada en 5307 quedó activa.",
+        {"type": "CARD_LIST", "data": {"cards": [card_json(MASTER_ACTIVE)]}},
     ),
     (
         "cancelled",
@@ -798,6 +812,27 @@ PRESENTATIONS = [
         Intent.CANCEL,
         ConversationFlowState.READY,
         "Listo, cancelé la transferencia. No se realizó ningún cambio.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "cancelled_card_freeze",
+        OperationCancelledResult(FREEZE_VISA),
+        Intent.CANCEL,
+        ConversationFlowState.READY,
+        "Listo, cancelé el bloqueo de la tarjeta. No se realizó ningún cambio.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "cancelled_card_unfreeze",
+        OperationCancelledResult(
+            PendingOperation(
+                PendingOperationType.UNFREEZE_CARD,
+                UnfreezeCardOperationData(VISA_FROZEN.id),
+            )
+        ),
+        Intent.CANCEL,
+        ConversationFlowState.READY,
+        "Listo, cancelé el desbloqueo de la tarjeta. No se realizó ningún cambio.",
         {"type": "TEXT", "data": {}},
     ),
     (

@@ -163,7 +163,7 @@ void main() {
     expect(cardTypeLabel(CardType.credit), 'Crédito');
     expect(cardTypeLabel(CardType.debit), 'Débito');
     expect(cardStatusLabel(CardStatus.active), 'Activa');
-    expect(cardStatusLabel(CardStatus.frozen), 'Congelada');
+    expect(cardStatusLabel(CardStatus.frozen), 'Bloqueada');
   });
 
   group('beneficiaryInitials', () {

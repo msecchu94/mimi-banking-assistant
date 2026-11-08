@@ -97,7 +97,7 @@ const cardConfirmationUiJson = {
   'type': 'CONFIRMATION',
   'data': {
     'operation_id': operationId,
-    'title': 'Congelar tarjeta',
+    'title': 'Bloquear tarjeta',
     'summary': {'type': 'CARD', 'card': cardJson},
     'actions': [
       {'type': 'CONFIRM', 'label': 'Confirmar'},

@@ -95,14 +95,14 @@ _CURRENCY_SYMBOLS = {Currency.ARS: "$", Currency.USD: "US$"}
 _CARD_BRANDS = {CardBrand.VISA: "Visa", CardBrand.MASTERCARD: "Mastercard"}
 _CARD_TYPES = {CardType.DEBIT: "débito", CardType.CREDIT: "crédito"}
 _CARD_VERBS = {
-    PendingOperationType.FREEZE_CARD: "congelar",
-    PendingOperationType.UNFREEZE_CARD: "descongelar",
+    PendingOperationType.FREEZE_CARD: "bloquear",
+    PendingOperationType.UNFREEZE_CARD: "desbloquear",
 }
 _CARD_TITLES = {
-    PendingOperationType.FREEZE_CARD: "Congelar tarjeta",
-    PendingOperationType.UNFREEZE_CARD: "Descongelar tarjeta",
+    PendingOperationType.FREEZE_CARD: "Bloquear tarjeta",
+    PendingOperationType.UNFREEZE_CARD: "Desbloquear tarjeta",
 }
-_CARD_STATUSES = {CardStatus.FROZEN: "congelada", CardStatus.ACTIVE: "activa"}
+_CARD_STATUSES = {CardStatus.FROZEN: "bloqueada", CardStatus.ACTIVE: "activa"}
 # A card operation rejected because the card is already in the requested
 # state is answered conversationally, from the card's persisted status.
 _CARD_ALREADY = {
@@ -111,8 +111,8 @@ _CARD_ALREADY = {
 }
 _OPERATIONS = {
     PendingOperationType.TRANSFER: "la transferencia",
-    PendingOperationType.FREEZE_CARD: "el congelamiento de la tarjeta",
-    PendingOperationType.UNFREEZE_CARD: "el descongelamiento de la tarjeta",
+    PendingOperationType.FREEZE_CARD: "el bloqueo de la tarjeta",
+    PendingOperationType.UNFREEZE_CARD: "el desbloqueo de la tarjeta",
 }
 _QUERY_FIELDS = {
     "period": "el período",
