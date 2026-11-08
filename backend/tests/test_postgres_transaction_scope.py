@@ -621,7 +621,7 @@ def test_engine_transfer_round_trip_is_observed_by_balance_and_transactions(
         amount=TRANSFER_AMOUNT,
         type=TransactionType.DEBIT,
         category=TransactionCategory.TRANSFER,
-        description="Transfer to Laura",
+        description="Transferencia a Laura",
         occurred_at=EXECUTED_AT,
         transfer_id=transfer.id,
     )

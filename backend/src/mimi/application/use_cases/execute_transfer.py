@@ -121,7 +121,7 @@ class ExecuteTransfer:
             amount=amount,
             type=TransactionType.DEBIT,
             category=TransactionCategory.TRANSFER,
-            description=f"Transfer to {beneficiary.name}",
+            description=f"Transferencia a {beneficiary.name}",
             occurred_at=now,
             transfer_id=transfer.id,
         )

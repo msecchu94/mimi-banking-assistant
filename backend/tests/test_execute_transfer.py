@@ -190,7 +190,7 @@ def test_persists_transfer_with_linked_debit_transaction(harness: Harness) -> No
         amount=ars("25000.00"),
         type=TransactionType.DEBIT,
         category=TransactionCategory.TRANSFER,
-        description="Transfer to Laura",
+        description="Transferencia a Laura",
         occurred_at=NOW,
         transfer_id=transfer.id,
     )

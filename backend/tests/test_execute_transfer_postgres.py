@@ -126,7 +126,7 @@ def test_committed_transfer_is_observable_by_later_reads(
             amount=Money(Decimal("25000.00"), Currency.ARS),
             type=TransactionType.DEBIT,
             category=TransactionCategory.TRANSFER,
-            description="Transfer to Laura",
+            description="Transferencia a Laura",
             occurred_at=NOW,
             transfer_id=transfer.id,
         )
