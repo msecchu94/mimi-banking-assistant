@@ -56,13 +56,17 @@ Examples: "Did I spend more than last month?", "This month vs last month", \
 "¿Gasté más que el mes pasado?".
 - GET_CARDS: asks about their cards or a card's status, without asking to \
 change it. Examples: "Show my cards", "Is my Visa frozen?", "¿Qué tarjetas \
-tengo?".
-- FREEZE_CARD: asks to freeze, block or pause a card, or reports a card as \
-lost or stolen. Examples: "Freeze my Visa", "I think I lost my card", \
-"Me robaron la tarjeta", "Bloqueá mi tarjeta".
-- UNFREEZE_CARD: asks to unfreeze, unblock or reactivate a card, or reports \
-a lost card as found. Examples: "Unblock my card", "I found my Visa", \
-"Desbloqueá la tarjeta".
+tengo?", "¿Está bloqueada mi Visa?", "¿Está pausada mi Visa?", "¿Está \
+activa mi Visa?".
+- FREEZE_CARD: asks to temporarily block, freeze, pause, suspend or disable \
+a card ("bloquear", "congelar", "pausar", "suspender", "desactivar \
+temporalmente", "inhabilitar"), or reports a card as lost or stolen. \
+Examples: "Freeze my Visa", "I think I lost my card", "Me robaron la \
+tarjeta", "Bloqueá mi tarjeta", "Pausá la Visa", "Suspendé la de débito".
+- UNFREEZE_CARD: asks to unblock, unfreeze, reactivate or re-enable a card \
+("desbloquear", "descongelar", "reactivar", "activar", "volver a \
+habilitar"), or reports a lost card as found. Examples: "Unblock my card", \
+"I found my Visa", "Desbloqueá la tarjeta", "Activá mi Mastercard".
 - GET_BENEFICIARIES: asks about their saved beneficiaries or contacts. \
 Examples: "Who can I send money to?", "Is Laura in my contacts?", \
 "¿Qué destinatarios tengo?".
@@ -96,6 +100,9 @@ the matching query intent instead;
 - negates an operation, e.g. "Don't freeze my card", "No transfieras nada";
 - asks for a banking product or operation not listed above, e.g. loans, \
 investments, bill payments or opening accounts;
+- asks to permanently cancel or close a card, e.g. "Dar de baja la \
+tarjeta", "Cancelar la tarjeta", "Anular la tarjeta"; this is never \
+FREEZE_CARD or CANCEL;
 - is off-topic or asks for general knowledge or tasks unrelated to their \
 banking, e.g. "What's the weather?", "Write a poem";
 - is meaningless or random text.

@@ -125,10 +125,12 @@ class AwaitingConfirmationResult:
 @dataclass(frozen=True)
 class PreValidationFailedResult:
     """A complete operation that cannot currently be executed; it was
-    discarded without requesting confirmation."""
+    discarded without requesting confirmation. A card operation rejected for
+    the card's current state sets ``card`` as read during pre-validation."""
 
     operation: PendingOperation
     error: ApplicationError
+    card: Card | None = None
 
 
 @dataclass(frozen=True)
@@ -146,10 +148,12 @@ class OperationCompletedResult:
 @dataclass(frozen=True)
 class OperationFailedResult:
     """A confirmed operation that failed revalidation; nothing was executed and
-    the operation was discarded."""
+    the operation was discarded. A card operation rejected for the card's
+    current state sets ``card`` as read after the rejection."""
 
     operation: PendingOperation
     error: ApplicationError
+    card: Card | None = None
 
 
 @dataclass(frozen=True)

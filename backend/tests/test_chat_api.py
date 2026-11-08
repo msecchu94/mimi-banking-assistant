@@ -145,6 +145,23 @@ TRANSFER_TO_LAURA = PendingOperation(
 FREEZE_VISA = PendingOperation(
     PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_DEBIT.id)
 )
+VISA_FROZEN = Card(
+    uuid4(), SAVINGS.id, CardType.DEBIT, CardBrand.VISA, "9134", CardStatus.FROZEN
+)
+MASTER_ACTIVE = Card(
+    uuid4(),
+    SAVINGS.id,
+    CardType.CREDIT,
+    CardBrand.MASTERCARD,
+    "5307",
+    CardStatus.ACTIVE,
+)
+FREEZE_FROZEN_VISA = PendingOperation(
+    PendingOperationType.FREEZE_CARD, FreezeCardOperationData(VISA_FROZEN.id)
+)
+UNFREEZE_ACTIVE_MASTER = PendingOperation(
+    PendingOperationType.UNFREEZE_CARD, UnfreezeCardOperationData(MASTER_ACTIVE.id)
+)
 OCTOBER = Period(
     datetime(2026, 10, 1, tzinfo=BUENOS_AIRES),
     datetime(2026, 11, 1, tzinfo=BUENOS_AIRES),
@@ -152,6 +169,15 @@ OCTOBER = Period(
 SEPTEMBER = Period(
     datetime(2026, 9, 1, tzinfo=BUENOS_AIRES),
     datetime(2026, 10, 1, tzinfo=BUENOS_AIRES),
+)
+
+JANUARY_2026 = Period(
+    datetime(2026, 1, 1, tzinfo=BUENOS_AIRES),
+    datetime(2026, 2, 1, tzinfo=BUENOS_AIRES),
+)
+DECEMBER_2025 = Period(
+    datetime(2025, 12, 1, tzinfo=BUENOS_AIRES),
+    datetime(2026, 1, 1, tzinfo=BUENOS_AIRES),
 )
 
 
@@ -318,8 +344,8 @@ PRESENTATIONS = [
         BalancesResult((SAVINGS, DOLLARS)),
         Intent.GET_BALANCE,
         ConversationFlowState.READY,
-        "Estos son tus saldos: Caja de ahorro: 150000.50 ARS; "
-        "Cuenta en dólares: 1200.00 USD.",
+        "Estos son tus saldos: Caja de ahorro: $ 150.000,50; "
+        "Cuenta en dólares: US$ 1.200,00.",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -327,7 +353,7 @@ PRESENTATIONS = [
         BalancesResult((SAVINGS,)),
         Intent.GET_BALANCE,
         ConversationFlowState.READY,
-        "El saldo de Caja de ahorro es 150000.50 ARS.",
+        "El saldo de Caja de ahorro es $ 150.000,50.",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -398,7 +424,7 @@ PRESENTATIONS = [
         ),
         Intent.ANALYZE_EXPENSES,
         ConversationFlowState.READY,
-        "Tus gastos del período suman 85000.00 ARS y 120.00 USD.",
+        "En octubre gastaste $ 85.000,00 y US$ 120,00.",
         {
             "type": "EXPENSE_SUMMARY",
             "data": {
@@ -463,8 +489,7 @@ PRESENTATIONS = [
         ),
         Intent.COMPARE_EXPENSES,
         ConversationFlowState.READY,
-        "Respecto del período comparado, en ARS gastaste 25000.00 ARS más y "
-        "en USD gastaste 40.00 USD menos.",
+        "En octubre gastaste $ 25.000,00 más y US$ 40,00 menos que en septiembre.",
         {
             "type": "EXPENSE_COMPARISON",
             "data": {
@@ -507,7 +532,7 @@ PRESENTATIONS = [
         ),
         Intent.COMPARE_EXPENSES,
         ConversationFlowState.READY,
-        "Respecto del período comparado, en ARS gastaste 31339.25 ARS menos.",
+        "En octubre gastaste $ 31.339,25 menos que en septiembre.",
         {
             "type": "EXPENSE_COMPARISON",
             "data": {
@@ -520,6 +545,80 @@ PRESENTATIONS = [
                         "previous_total": ars("323251.25"),
                         "difference": ars("31339.25"),
                         "change": "DECREASE",
+                    },
+                ],
+            },
+        },
+    ),
+    (
+        "expense_comparison_unchanged",
+        ExpenseComparisonResult(
+            ExpenseComparison(
+                ExpenseAnalysis(OCTOBER, None, ()),
+                ExpenseAnalysis(SEPTEMBER, None, ()),
+                (
+                    CurrencyComparison(
+                        Currency.ARS,
+                        Money(Decimal("160000.00"), Currency.ARS),
+                        Money(Decimal("160000.00"), Currency.ARS),
+                        Money(Decimal("0.00"), Currency.ARS),
+                        ExpenseChange.UNCHANGED,
+                    ),
+                ),
+            )
+        ),
+        Intent.COMPARE_EXPENSES,
+        ConversationFlowState.READY,
+        "En octubre gastaste lo mismo ($ 160.000,00) que en septiembre.",
+        {
+            "type": "EXPENSE_COMPARISON",
+            "data": {
+                "category": None,
+                "current_period": {"from": "2026-10-01", "to": "2026-10-31"},
+                "previous_period": {"from": "2026-09-01", "to": "2026-09-30"},
+                "currencies": [
+                    {
+                        "current_total": ars("160000.00"),
+                        "previous_total": ars("160000.00"),
+                        "difference": ars("0.00"),
+                        "change": "UNCHANGED",
+                    },
+                ],
+            },
+        },
+    ),
+    (
+        "expense_comparison_cross_year",
+        ExpenseComparisonResult(
+            ExpenseComparison(
+                ExpenseAnalysis(JANUARY_2026, None, ()),
+                ExpenseAnalysis(DECEMBER_2025, None, ()),
+                (
+                    CurrencyComparison(
+                        Currency.ARS,
+                        Money(Decimal("185000.00"), Currency.ARS),
+                        Money(Decimal("160000.00"), Currency.ARS),
+                        Money(Decimal("25000.00"), Currency.ARS),
+                        ExpenseChange.INCREASE,
+                    ),
+                ),
+            )
+        ),
+        Intent.COMPARE_EXPENSES,
+        ConversationFlowState.READY,
+        "En enero de 2026 gastaste $ 25.000,00 más que en diciembre de 2025.",
+        {
+            "type": "EXPENSE_COMPARISON",
+            "data": {
+                "category": None,
+                "current_period": {"from": "2026-01-01", "to": "2026-01-31"},
+                "previous_period": {"from": "2025-12-01", "to": "2025-12-31"},
+                "currencies": [
+                    {
+                        "current_total": ars("185000.00"),
+                        "previous_total": ars("160000.00"),
+                        "difference": ars("25000.00"),
+                        "change": "INCREASE",
                     },
                 ],
             },
@@ -620,7 +719,7 @@ PRESENTATIONS = [
         ),
         Intent.FREEZE_CARD,
         ConversationFlowState.COLLECTING_DATA,
-        "¿Qué tarjeta querés congelar?",
+        "¿Qué tarjeta querés bloquear?",
         {
             "type": "CARD_SELECTOR",
             "data": {"cards": [card_json(VISA_DEBIT), card_json(MASTER_CREDIT)]},
@@ -635,7 +734,7 @@ PRESENTATIONS = [
         ),
         Intent.UNFREEZE_CARD,
         ConversationFlowState.COLLECTING_DATA,
-        "¿Qué tarjeta querés descongelar?",
+        "¿Qué tarjeta querés desbloquear?",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -648,7 +747,7 @@ PRESENTATIONS = [
         ),
         Intent.FREEZE_CARD,
         ConversationFlowState.COLLECTING_DATA,
-        "No encontré esa tarjeta. ¿Qué tarjeta querés congelar?",
+        "No encontré esa tarjeta. ¿Qué tarjeta querés bloquear?",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -678,7 +777,7 @@ PRESENTATIONS = [
         ),
         Intent.TRANSFER_MONEY,
         ConversationFlowState.COLLECTING_DATA,
-        "El monto de 25000.00 ARS no corresponde a la moneda de la cuenta "
+        "El monto de $ 25.000,00 no corresponde a la moneda de la cuenta "
         "elegida (USD). ¿Cuánto querés transferir?",
         {"type": "TEXT", "data": {}},
     ),
@@ -689,7 +788,7 @@ PRESENTATIONS = [
         ),
         Intent.TRANSFER_MONEY,
         ConversationFlowState.WAITING_CONFIRMATION,
-        "¿Confirmás la transferencia de 25000.00 ARS a Laura desde Caja de ahorro?",
+        "¿Confirmás la transferencia de $ 25.000,00 a Laura desde Caja de ahorro?",
         {
             "type": "CONFIRMATION",
             "data": {
@@ -719,12 +818,12 @@ PRESENTATIONS = [
         ),
         Intent.FREEZE_CARD,
         ConversationFlowState.WAITING_CONFIRMATION,
-        "¿Confirmás que querés congelar la tarjeta Visa de débito terminada en 4821?",
+        "¿Confirmás que querés bloquear la tarjeta Visa de débito terminada en 4821?",
         {
             "type": "CONFIRMATION",
             "data": {
                 "operation_id": str(OPERATION_ID),
-                "title": "Congelar tarjeta",
+                "title": "Bloquear tarjeta",
                 "summary": {"type": "CARD", "card": card_json(VISA_DEBIT)},
                 "actions": [
                     {"type": "CONFIRM", "label": "Confirmar"},
@@ -750,7 +849,7 @@ PRESENTATIONS = [
         ),
         Intent.TRANSFER_MONEY,
         ConversationFlowState.READY,
-        "La transferencia de 25000.00 ARS a Laura se realizó con éxito.",
+        "La transferencia de $ 25.000,00 a Laura se realizó con éxito.",
         {
             "type": "TRANSFER_SUMMARY",
             "data": {
@@ -769,11 +868,25 @@ PRESENTATIONS = [
         ),
         Intent.FREEZE_CARD,
         ConversationFlowState.READY,
-        "Tu tarjeta Visa de débito terminada en 4821 quedó congelada.",
+        "Tu tarjeta Visa de débito terminada en 4821 quedó bloqueada.",
         {
             "type": "CARD_LIST",
             "data": {"cards": [{**card_json(VISA_DEBIT), "status": "FROZEN"}]},
         },
+    ),
+    (
+        "card_unfreeze_completed",
+        OperationCompletedResult(
+            PendingOperation(
+                PendingOperationType.UNFREEZE_CARD,
+                UnfreezeCardOperationData(MASTER_ACTIVE.id),
+            ),
+            card=MASTER_ACTIVE,
+        ),
+        Intent.UNFREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu tarjeta Mastercard de crédito terminada en 5307 quedó activa.",
+        {"type": "CARD_LIST", "data": {"cards": [card_json(MASTER_ACTIVE)]}},
     ),
     (
         "cancelled",
@@ -781,6 +894,27 @@ PRESENTATIONS = [
         Intent.CANCEL,
         ConversationFlowState.READY,
         "Listo, cancelé la transferencia. No se realizó ningún cambio.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "cancelled_card_freeze",
+        OperationCancelledResult(FREEZE_VISA),
+        Intent.CANCEL,
+        ConversationFlowState.READY,
+        "Listo, cancelé el bloqueo de la tarjeta. No se realizó ningún cambio.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "cancelled_card_unfreeze",
+        OperationCancelledResult(
+            PendingOperation(
+                PendingOperationType.UNFREEZE_CARD,
+                UnfreezeCardOperationData(VISA_FROZEN.id),
+            )
+        ),
+        Intent.CANCEL,
+        ConversationFlowState.READY,
+        "Listo, cancelé el desbloqueo de la tarjeta. No se realizó ningún cambio.",
         {"type": "TEXT", "data": {}},
     ),
     (
@@ -797,6 +931,46 @@ PRESENTATIONS = [
         Intent.CANCEL,
         ConversationFlowState.READY,
         "No hay ninguna operación pendiente para cancelar.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "pre_validation_card_already_frozen",
+        PreValidationFailedResult(
+            FREEZE_FROZEN_VISA, InvalidCardStateError(), card=VISA_FROZEN
+        ),
+        Intent.FREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu Visa terminada en 9134 ya está bloqueada.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "pre_validation_card_already_active",
+        PreValidationFailedResult(
+            UNFREEZE_ACTIVE_MASTER, InvalidCardStateError(), card=MASTER_ACTIVE
+        ),
+        Intent.UNFREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu Mastercard terminada en 5307 ya está activa.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "revalidation_card_already_frozen",
+        OperationFailedResult(
+            FREEZE_FROZEN_VISA, InvalidCardStateError(), card=VISA_FROZEN
+        ),
+        Intent.FREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu Visa terminada en 9134 ya está bloqueada.",
+        {"type": "TEXT", "data": {}},
+    ),
+    (
+        "revalidation_card_already_active",
+        OperationFailedResult(
+            UNFREEZE_ACTIVE_MASTER, InvalidCardStateError(), card=MASTER_ACTIVE
+        ),
+        Intent.UNFREEZE_CARD,
+        ConversationFlowState.READY,
+        "Tu Mastercard terminada en 5307 ya está activa.",
         {"type": "TEXT", "data": {}},
     ),
 ]
@@ -862,6 +1036,31 @@ def test_periods_are_presented_as_local_days(
 
 
 @pytest.mark.parametrize(
+    ("balance", "text"),
+    [
+        (Money(Decimal("0"), Currency.ARS), "$ 0,00"),
+        (Money(Decimal("999.9"), Currency.ARS), "$ 999,90"),
+        (Money(Decimal("1000"), Currency.ARS), "$ 1.000,00"),
+        (Money(Decimal("20000.00"), Currency.ARS), "$ 20.000,00"),
+        (Money(Decimal("1234567.891"), Currency.ARS), "$ 1.234.567,89"),
+        (Money(Decimal("-1500.5"), Currency.ARS), "−$ 1.500,50"),
+        (Money(Decimal("1200"), Currency.USD), "US$ 1.200,00"),
+        (Money(Decimal("-25"), Currency.USD), "−US$ 25,00"),
+    ],
+)
+def test_amounts_in_messages_are_formatted_for_display(
+    chat_client: TestClient, stub: StubEngine, balance: Money, text: str
+) -> None:
+    account = Account(uuid4(), CUSTOMER_ID, "Cuenta", balance, AccountStatus.ACTIVE)
+    stub.result = BalancesResult((account,))
+    stub.intent = Intent.GET_BALANCE
+
+    response = post_message(chat_client)
+
+    assert response.json()["message"] == f"El saldo de Cuenta es {text}."
+
+
+@pytest.mark.parametrize(
     ("result", "status", "code"),
     [
         (
@@ -897,6 +1096,16 @@ def test_failed_operations_are_error_responses(
 
     assert response.status_code == status
     assert response.json()["code"] == code
+
+
+def test_card_state_failure_without_its_card_stays_an_error(
+    chat_client: TestClient, stub: StubEngine
+) -> None:
+    stub.result = PreValidationFailedResult(FREEZE_FROZEN_VISA, InvalidCardStateError())
+
+    response = post_message(chat_client)
+
+    assert_api_error(response, 409, "INVALID_CARD_STATE")
 
 
 # Errors.
