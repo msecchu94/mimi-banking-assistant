@@ -142,7 +142,7 @@ class _TypeChip extends StatelessWidget {
   }
 }
 
-/// The status always reads as text; the dot or snowflake only reinforces it.
+/// The status always reads as text; the dot or lock only reinforces it.
 class _Status extends StatelessWidget {
   const _Status(this.status);
 
@@ -166,7 +166,11 @@ class _Status extends StatelessWidget {
         ),
         child: SizedBox.square(dimension: _dotSize),
       ),
-      CardStatus.frozen => Icon(Icons.ac_unit, size: _iconSize, color: color),
+      CardStatus.frozen => Icon(
+        Icons.lock_outline,
+        size: _iconSize,
+        color: color,
+      ),
     };
 
     return Row(

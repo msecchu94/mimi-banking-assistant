@@ -47,7 +47,7 @@ jobs:
       - name: Run evaluation (dataset v3)
         run: >-
           python -m mimi.evaluation
-          --dataset evals/interpretation/dataset.v3.jsonl
+          --dataset evals/interpretation/dataset.v4.jsonl
           --output evals/interpretation/reports/report.json
 
       - name: Upload report

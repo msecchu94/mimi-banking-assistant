@@ -200,12 +200,12 @@ State-changing operations are never executed from a message. They are
 collected, validated and then wait for an explicit `CONFIRM`.
 
 ```bash
-chat "Congelá mi tarjeta"
+chat "Bloqueá mi tarjeta"
 ```
 
 ```json
 {
-  "message": "¿Qué tarjeta querés congelar?",
+  "message": "¿Qué tarjeta querés bloquear?",
   "intent": "FREEZE_CARD",
   "conversation_state": "COLLECTING_DATA",
   "ui": {
@@ -233,14 +233,14 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' -d '{
 
 ```json
 {
-  "message": "¿Confirmás que querés congelar la tarjeta Visa de débito terminada en 4821?",
+  "message": "¿Confirmás que querés bloquear la tarjeta Visa de débito terminada en 4821?",
   "intent": "FREEZE_CARD",
   "conversation_state": "WAITING_CONFIRMATION",
   "ui": {
     "type": "CONFIRMATION",
     "data": {
       "operation_id": "5a2c…",
-      "title": "Congelar tarjeta",
+      "title": "Bloquear tarjeta",
       "summary": { "type": "CARD", "card": { "last_four": "4821", "status": "ACTIVE", "…": "…" } },
       "actions": [
         { "type": "CONFIRM", "label": "Confirmar" },
@@ -251,8 +251,12 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' -d '{
 }
 ```
 
-Naming the card goes straight to confirmation: `"Congelá la Visa de
-débito"`, `"Descongelá la que termina en 9134"`.
+Naming the card goes straight to confirmation: `"Bloqueá la Visa de
+débito"`, `"Desbloqueá la que termina en 9134"`.
+
+A card already in the requested state is not an error: selecting the
+blocked Visa `9134` to block it returns `200` with a `TEXT` response,
+`"Tu Visa terminada en 9134 ya está bloqueada."`, and state `READY`.
 
 ## 6. Transfers
 
@@ -359,7 +363,6 @@ Errors share one shape:
 | A `conversation_id` that does not exist | 404 | `CONVERSATION_NOT_FOUND` |
 | Both `message` and `interaction`, or a blank message | 422 | `INVALID_REQUEST` |
 | `"Transferile 50000000 pesos a Laura"` | 422 | `INSUFFICIENT_FUNDS` |
-| Selecting the frozen Visa `9134` to freeze | 409 | `INVALID_CARD_STATE` |
 | `CONFIRM` with an old or wrong `operation_id` | 409 | `INVALID_INTERACTION` |
 | A new transfer while a card operation is pending | 409 | `PENDING_OPERATION_CONFLICT` |
 | LLM unreachable or bad API key | 503 | `SERVICE_UNAVAILABLE` |

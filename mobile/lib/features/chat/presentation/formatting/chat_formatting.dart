@@ -160,7 +160,7 @@ String cardTypeLabel(CardType type) => switch (type) {
 
 String cardStatusLabel(CardStatus status) => switch (status) {
   CardStatus.active => 'Activa',
-  CardStatus.frozen => 'Congelada',
+  CardStatus.frozen => 'Bloqueada',
 };
 
 /// A beneficiary's initials, e.g. `DR` for `Diego Romero`: the first letter

@@ -408,7 +408,7 @@ void main() {
       ..replies.addAll([
         Right(
           _reply(
-            '¿Qué tarjeta querés congelar?',
+            '¿Qué tarjeta querés bloquear?',
             const ChatUi.cardSelector(cards: [_card]),
           ),
         ),
@@ -477,8 +477,8 @@ void main() {
         expect(find.text('•••• $lastFour'), findsOneWidget);
       }
       expect(find.text('Activa'), findsNWidgets(2));
-      expect(find.text('Congelada'), findsOneWidget);
-      expect(find.byIcon(Icons.ac_unit), findsOneWidget);
+      expect(find.text('Bloqueada'), findsOneWidget);
+      expect(find.byIcon(Icons.lock_outline), findsOneWidget);
       for (final card in cards) {
         expect(find.textContaining(card.id), findsNothing);
       }
