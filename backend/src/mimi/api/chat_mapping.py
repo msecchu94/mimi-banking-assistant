@@ -92,6 +92,22 @@ _CENT = Decimal("0.01")
 # Amounts in messages read as on the client, e.g. `$ 20.000,00`.
 _CURRENCY_SYMBOLS = {Currency.ARS: "$", Currency.USD: "US$"}
 
+_MONTH_NAMES = (
+    "",
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
+
 _CARD_BRANDS = {CardBrand.VISA: "Visa", CardBrand.MASTERCARD: "Mastercard"}
 _CARD_TYPES = {CardType.DEBIT: "débito", CardType.CREDIT: "crédito"}
 _CARD_VERBS = {
@@ -290,6 +306,27 @@ def _money_text(money: entities.Money) -> str:
     return f"{sign}{_CURRENCY_SYMBOLS[money.currency]} {grouped},{cents}"
 
 
+def _month_period_text(period: Period, *, include_year: bool) -> str | None:
+    start = period.start
+    end = period.end
+
+    if start.day != 1 or start.time() != time.min or end.time() != time.min:
+        return None
+
+    if start.month == 12:
+        expected_year = start.year + 1
+        expected_month = 1
+    else:
+        expected_year = start.year
+        expected_month = start.month + 1
+
+    if end.day != 1 or end.year != expected_year or end.month != expected_month:
+        return None
+
+    label = _MONTH_NAMES[start.month]
+    return f"{label} de {start.year}" if include_year else label
+
+
 def _period(period: Period, timezone: ZoneInfo) -> ExpensePeriod:
     """The local days of a half-open period of whole local days."""
     start = period.start.astimezone(timezone)
@@ -361,24 +398,49 @@ def _joined(texts: list[str]) -> str:
 def _expense_summary(analysis: ExpenseAnalysis) -> str:
     if not analysis.currencies:
         return "No hay gastos en ese período."
+
     totals = _joined([_money_text(c.total) for c in analysis.currencies])
+    period_label = _month_period_text(analysis.period, include_year=False)
+
+    if period_label is not None:
+        return f"En {period_label} gastaste {totals}."
+
     return f"Tus gastos del período suman {totals}."
 
 
 def _expense_comparison(comparison: ExpenseComparison) -> str:
     if not comparison.currencies:
         return "No hay gastos en ninguno de los dos períodos."
+
+    current_period = comparison.current.period
+    previous_period = comparison.previous.period
+    include_year = current_period.start.year != previous_period.start.year
+
+    current_label = _month_period_text(
+        current_period,
+        include_year=include_year,
+    )
+    previous_label = _month_period_text(
+        previous_period,
+        include_year=include_year,
+    )
+
     changes = []
     for c in comparison.currencies:
-        difference = _money_text(c.difference)
         match ExpenseChange(c.change.value):
             case ExpenseChange.INCREASE:
-                changes.append(f"en {c.currency} gastaste {difference} más")
+                changes.append(f"{_money_text(c.difference)} más")
             case ExpenseChange.DECREASE:
-                changes.append(f"en {c.currency} gastaste {difference} menos")
+                changes.append(f"{_money_text(c.difference)} menos")
             case ExpenseChange.UNCHANGED:
-                changes.append(f"en {c.currency} gastaste lo mismo")
-    return f"Respecto del período comparado, {_joined(changes)}."
+                changes.append(f"lo mismo ({_money_text(c.current_total)})")
+
+    joined_changes = _joined(changes)
+
+    if current_label is not None and previous_label is not None:
+        return f"En {current_label} gastaste {joined_changes} que en {previous_label}."
+
+    return f"Respecto del período comparado, gastaste {joined_changes}."
 
 
 def _incomplete_query(result: IncompleteQueryResult) -> str:
