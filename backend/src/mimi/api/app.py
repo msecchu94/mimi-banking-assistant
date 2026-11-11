@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from mimi.api import chat, health
+from mimi.api import accounts, chat, health
 from mimi.api.chat import require_demo_customer_id
 from mimi.api.errors import register_error_handlers
 from mimi.composition import Container
@@ -26,4 +26,5 @@ def create_app(container: Container) -> FastAPI:
     register_error_handlers(app)
     app.include_router(health.router)
     app.include_router(chat.router)
+    app.include_router(accounts.router)
     return app
