@@ -1,0 +1,228 @@
+{
+  "_note": "Timing and placement in source frames (60 fps, frame 0 = 0.000 s). Card start/end are the first and last frames of the entrance and exit animations. Values marked measured come from the clean recording; card positions marked pending await review.",
+  "source": "input/mimi_original.mp4",
+  "video": {
+    "width": 1206,
+    "height": 2622,
+    "fps": 60,
+    "frames": 5591
+  },
+  "layout": {
+    "card_x": 103,
+    "composer_top": 2380,
+    "near_input_bottom": 2330,
+    "_note": "Final rule: every feature card sits in one fixed position directly above the message field (bottom edge at near_input_bottom). Only exception: Compartir comprobante, on the receipt header (top 1166). Cards are temporary overlays and may cover content while visible."
+  },
+  "home_focus": {
+    "_measured": "Home first frame 156; button static 156-278; tap ripple from 279; sheet and scrim from 282; sheet settles at 294.",
+    "button": {
+      "x": 862,
+      "y": 2197,
+      "w": 294,
+      "h": 140
+    },
+    "blur_in": [
+      54,
+      138
+    ],
+    "sheet_frame": 282,
+    "blur_out_end": 296,
+    "sheet_top": {
+      "282": 2016,
+      "283": 2016,
+      "284": 1913,
+      "285": 1840,
+      "286": 1780,
+      "287": 1732,
+      "288": 1689,
+      "289": 1656,
+      "290": 1630,
+      "291": 1611,
+      "292": 1598,
+      "293": 1591,
+      "294": 1588,
+      "295": 1588,
+      "296": 1588
+    },
+    "bubble": {
+      "text": "Tu asistente bancario",
+      "enter": [
+        96,
+        126
+      ]
+    },
+    "_timing": "blur_in and bubble.enter count output frames from Home's first frame (holds included); sheet_frame, sheet_top and blur_out_end are source frames."
+  },
+  "cards": [
+    {
+      "id": "saldos",
+      "title": "Consultar saldos",
+      "subtitle": "Consultá tus cuentas con lenguaje natural.",
+      "start": 485,
+      "end": 712,
+      "position": {
+        "x": 103,
+        "bottom": 2330
+      },
+      "_position": "Fixed position directly above the message field."
+    },
+    {
+      "id": "analizar",
+      "title": "Analizar gastos",
+      "subtitle": "Consultá tus gastos por período.",
+      "start": 905,
+      "end": 1132,
+      "position": {
+        "x": 103,
+        "bottom": 2330
+      },
+      "_position": "Fixed position directly above the message field."
+    },
+    {
+      "id": "comparar",
+      "title": "Comparar gastos",
+      "subtitle": "Compará tus gastos entre períodos.",
+      "start": 1314,
+      "end": 1541,
+      "position": {
+        "x": 103,
+        "bottom": 2330
+      },
+      "_position": "Fixed position directly above the message field."
+    },
+    {
+      "id": "filtrar",
+      "title": "Filtrar gastos",
+      "subtitle": "Consultá tus gastos por categoría.",
+      "start": 1703,
+      "end": 1876,
+      "position": {
+        "x": 103,
+        "bottom": 2330
+      },
+      "_position": "Fixed position directly above the message field."
+    },
+    {
+      "id": "tarjetas",
+      "title": "Administrar tarjetas",
+      "subtitle": "Consultá y administrá tus tarjetas\nde forma segura.",
+      "start": 2075,
+      "end": 2367,
+      "position": {
+        "x": 103,
+        "bottom": 2330
+      },
+      "_position": "Fixed position directly above the message field."
+    },
+    {
+      "id": "transferencias",
+      "title": "Realizar transferencias",
+      "subtitle": "Completá operaciones paso a paso\nmanteniendo el contexto.",
+      "start": 3125,
+      "end": 3292,
+      "position": {
+        "x": 103,
+        "bottom": 2330
+      },
+      "_position": "Fixed position directly above the message field."
+    },
+    {
+      "id": "comprobante",
+      "title": "Compartir comprobante",
+      "subtitle": "Compartí el comprobante de tu transferencia.",
+      "start": 4842,
+      "end": 4995,
+      "position": {
+        "x": 103,
+        "top": 1166
+      },
+      "exchange_top": 888,
+      "_exchange_top": "The current exchange starts at the success message above the receipt (measured); the receipt's teal border is not a user bubble.",
+      "near_input": false,
+      "_near_input": "No near-input option: the receipt and its Compartir button fill y 1120-2300 right above the field.",
+      "_position": "Receipt header (receipt x 62-1144, y 1119-2302): centered on the success check (1192-1309); title 'Transferencia realizada' (1379-1425), amount, details and Compartir stay visible. The header (233 px) is taller than the card, and no clean edge exists between check and title."
+    },
+    {
+      "id": "movimientos",
+      "title": "Consultar movimientos",
+      "subtitle": "Revisá los últimos movimientos\nde tus cuentas.",
+      "start": 5004,
+      "end": 5202,
+      "position": {
+        "x": 103,
+        "bottom": 2330
+      },
+      "_position": "Fixed position directly above the message field."
+    }
+  ],
+  "intro": {
+    "_note": "Opening sequence. The reference's splash is used as a standalone still (its static frames averaged, then dithered), never layered over the recording. Home starts at source frame 156; source frames 169-278 are static (max change 2/255), so holding one extends Home invisibly.",
+    "splash": {
+      "source": "input/mimi_referencia.mp4",
+      "average_frames": [
+        10,
+        150
+      ],
+      "frames": 90,
+      "dissolve_frames": 12
+    },
+    "home_first_frame": 156,
+    "home_hold": {
+      "source_frame": 230,
+      "frames": 111
+    },
+    "preview_last_source_frame": 420
+  },
+  "caret": {
+    "_note": "The text field's caret (measured): blinks on a 61-frame cycle (about 42 on, 19 off, 6-8 frame fades) while the field is active; it is steadily off after a confirmation is shown.",
+    "box": [
+      112,
+      2400,
+      14,
+      96
+    ],
+    "period": 61
+  },
+  "holds": [
+    {
+      "name": "comparison",
+      "_why": "September comparison result settles at 1696; typing starts at 1703.",
+      "source_frame": 1700,
+      "frames": 36,
+      "caret": "steady",
+      "_caret": "Caret steadily on from 1687 until typing starts at 1703: a plain hold only lengthens that."
+    },
+    {
+      "name": "block_confirm",
+      "_why": "Block confirmation settles at 2493; Confirmar is pressed about 42.3 s.",
+      "source_frame": 2500,
+      "frames": 72,
+      "caret": "cycle",
+      "_caret": "Caret blinking (on 2484-2526): one real 61-frame blink cycle from 2440-2500 plus 11 frames of the steady on state, so the blink phase is exact when the recording resumes."
+    },
+    {
+      "name": "laura_confirm",
+      "_why": "Confirmation settles at 3909; the Cancelar press animation starts at 3912.",
+      "source_frame": 3911,
+      "frames": 60,
+      "caret": "steady",
+      "_caret": "Caret steadily off from about 3890: a plain hold."
+    },
+    {
+      "name": "martin_confirm",
+      "_why": "Confirmation settles at 4653; the Confirmar press animation starts at 4655.",
+      "source_frame": 4654,
+      "frames": 42,
+      "caret": "steady",
+      "_caret": "Caret steadily off from about 4640: a plain hold."
+    },
+    {
+      "name": "final_home",
+      "_why": "Final updated Home is fully still from 5575.",
+      "source_frame": 5590,
+      "frames": 120,
+      "caret": "steady",
+      "_caret": "Home fully still from 5575; no caret."
+    }
+  ]
+}
