@@ -43,8 +43,9 @@ simulated. It is not an autonomous agent and does not use LLM tool calling.
   </tr>
 </table>
 
-<!-- PLACEHOLDER: replace with the public URL of the full demo video once it is published. -->
-**Full demo video (1 min 39 s):** *link coming soon*
+### ▶️ [Watch the full demo video (1 min 39 s)](https://github.com/msecchu94/mimi-banking-assistant/releases/download/v1.1.0/mimi_demo_v1_HQ_COMPAT.mp4)
+
+MP4, ~37 MB, published with the [v1.1.0 release](https://github.com/msecchu94/mimi-banking-assistant/releases/tag/v1.1.0).
 
 The app UI is in Spanish (Argentina). Screenshots are taken from the demo
 recording on the iOS Simulator.
@@ -65,7 +66,7 @@ recording on the iOS Simulator.
   progress.
 - Confirm, cancel and card-selection actions handled without any LLM call.
 
-**Added after v1.0.0 (on `main`)**
+**Released in [v1.1.0](https://github.com/msecchu94/mimi-banking-assistant/releases/tag/v1.1.0)**
 
 - The Home screen reads the balance and the three latest transactions from
   read-only backend endpoints (`GET /accounts`, `GET /transactions`), and
@@ -334,5 +335,4 @@ respective owners.
 **Maximiliano Secchi**
 
 - GitHub: [@msecchu94](https://github.com/msecchu94)
-<!-- PLACEHOLDER: add the LinkedIn profile URL and, once published, the LinkedIn demo post URL. -->
 - LinkedIn: https://www.linkedin.com/in/maximiliano-secchi-677503178/
