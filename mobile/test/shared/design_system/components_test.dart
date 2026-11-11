@@ -129,6 +129,38 @@ void main() {
       expect(sent, ['Hola Mimi']);
     });
 
+    for (final (name, text, canSend, expected) in [
+      ('sending', '  Hola Mimi  ', true, ['Hola Mimi']),
+      ('there is nothing to send', '', true, <String>[]),
+      ('sending is unavailable', 'Hola', false, <String>[]),
+    ]) {
+      testWidgets('keeps focus when submitted while $name', (tester) async {
+        final controller = TextEditingController();
+        final focusNode = FocusNode();
+        addTearDown(controller.dispose);
+        addTearDown(focusNode.dispose);
+        final sent = <String>[];
+        await _pump(
+          tester,
+          MimiComposer(
+            controller: controller,
+            focusNode: focusNode,
+            canSend: canSend,
+            onSend: sent.add,
+          ),
+        );
+
+        await tester.enterText(find.byType(TextField), text);
+        await tester.pump();
+        expect(focusNode.hasFocus, isTrue);
+        await tester.testTextInput.receiveAction(TextInputAction.send);
+        await tester.pump();
+
+        expect(sent, expected);
+        expect(focusNode.hasFocus, isTrue);
+      });
+    }
+
     testWidgets('does not send while sending is unavailable', (tester) async {
       final controller = TextEditingController(text: 'Hola');
       addTearDown(controller.dispose);

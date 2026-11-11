@@ -21,12 +21,15 @@ import 'package:mimi/features/chat/presentation/conversation/replies/transfer_co
 import 'package:mimi/features/chat/presentation/conversation/replies/transfer_failed_view.dart';
 import 'package:mimi/features/chat/presentation/conversation/replies/transfer_summary_view.dart';
 import 'package:mimi/features/chat/presentation/mimi_sheet/mimi_sheet.dart';
+import 'package:mimi/features/chat/presentation/mimi_sheet/show_mimi_sheet.dart';
+import 'package:mimi/features/home/home_providers.dart';
 import 'package:mimi/features/home/presentation/home_page.dart';
 import 'package:mimi/shared/design_system/components/mimi_button.dart';
 import 'package:mimi/shared/design_system/components/mimi_list_item.dart';
 import 'package:mimi/shared/design_system/mimi_tokens.dart';
 
 import '../../../helpers/inter_font.dart';
+import '../../home/home_fixtures.dart';
 
 const _conversationId = '9e47b4c1-4a8c-4a3c-98d2-a31c9c87e641';
 const _operationId = '5b0c7d2e-3f41-4a6b-9c8d-1e2f3a4b5c6d';
@@ -143,6 +146,7 @@ Future<void> _pumpHome(
   _ScriptedRepository repository, {
   Size size = _common,
   EdgeInsets safeArea = EdgeInsets.zero,
+  FakeHomeRepository? home,
 }) async {
   tester.view
     ..physicalSize = size
@@ -152,7 +156,11 @@ Future<void> _pumpHome(
 
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [chatRepositoryProvider.overrideWithValue(repository)],
+      overrides: [
+        chatRepositoryProvider.overrideWithValue(repository),
+        // The sheet opens over a loaded Home.
+        homeRepositoryProvider.overrideWithValue(home ?? FakeHomeRepository()),
+      ],
       child: MaterialApp(theme: buildAppTheme(), home: const HomePage()),
     ),
   );
@@ -161,6 +169,41 @@ Future<void> _pumpHome(
 Future<void> _openMimi(WidgetTester tester) async {
   await tester.tap(find.text('✦ Mimi'));
   await tester.pumpAndSettle();
+}
+
+/// Opens Mimi as a demo build with `MIMI_COMPOSER_AUTOFOCUS=true` does.
+Future<void> _openMimiWithAutofocus(
+  WidgetTester tester, {
+  bool settle = true,
+}) async {
+  unawaited(
+    showMimiSheet(
+      tester.element(find.byType(HomePage)),
+      autofocusComposer: true,
+    ),
+  );
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+  }
+}
+
+bool _composerFocused(WidgetTester tester) =>
+    tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus;
+
+Future<void> _closeMimi(WidgetTester tester) async {
+  if (_isExpanded(tester)) {
+    await tester.tap(find.bySemanticsLabel('Contraer Mimi'));
+    await tester.pumpAndSettle();
+  }
+  await tester.drag(
+    find.bySemanticsLabel('Expandir Mimi'),
+    const Offset(0, 300),
+  );
+  await tester.pumpAndSettle();
+  expect(find.byType(MimiSheet), findsNothing);
 }
 
 Future<void> _send(WidgetTester tester, String message) async {
@@ -247,6 +290,184 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_isExpanded(tester), isTrue);
+  });
+
+  group('composer focus', () {
+    testWidgets('is not taken on open by default', (tester) async {
+      await _pumpHome(tester, _ScriptedRepository());
+      await _openMimi(tester);
+
+      expect(
+        tester.widget<MimiSheet>(find.byType(MimiSheet)).autofocusComposer,
+        isFalse,
+      );
+      expect(_composerFocused(tester), isFalse);
+      expect(_isExpanded(tester), isFalse);
+    });
+
+    testWidgets('demo autofocus focuses the composer and stays compact', (
+      tester,
+    ) async {
+      final repository = _ScriptedRepository();
+      await _pumpHome(tester, repository);
+
+      await _openMimiWithAutofocus(tester);
+
+      expect(_composerFocused(tester), isTrue);
+      expect(_isExpanded(tester), isFalse);
+      expect(repository.calls, [('start', null)]);
+    });
+
+    testWidgets('the software keyboard appearing expands the sheet', (
+      tester,
+    ) async {
+      await _pumpHome(tester, _ScriptedRepository());
+      await _openMimiWithAutofocus(tester);
+      expect(_isExpanded(tester), isFalse);
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pumpAndSettle();
+
+      // Expanded above the keyboard, so measured by the handle's state.
+      expect(find.bySemanticsLabel('Contraer Mimi'), findsOneWidget);
+      expect(_composerFocused(tester), isTrue);
+      expect(find.byType(TextField).hitTestable(), findsOneWidget);
+    });
+
+    testWidgets('sending with the keyboard keeps focus through the reply', (
+      tester,
+    ) async {
+      final repository = _ScriptedRepository()
+        ..replies.add(Right(_reply(r'Tu saldo es $ 1.284.650,75.')));
+      await _pumpHome(tester, repository);
+      await _openMimiWithAutofocus(tester);
+
+      await tester.enterText(find.byType(TextField), '¿Cuál es mi saldo?');
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pumpAndSettle();
+
+      expect(repository.calls.last, ('sendMessage', '¿Cuál es mi saldo?'));
+      expect(find.text(r'Tu saldo es $ 1.284.650,75.'), findsOneWidget);
+      expect(_composerFocused(tester), isTrue);
+      expect(_isExpanded(tester), isFalse);
+    });
+
+    testWidgets('waits for a failed start to be retried', (tester) async {
+      final repository = _ScriptedRepository()
+        ..startResult = const Left(ConnectionFailure());
+      await _pumpHome(tester, repository);
+      await _openMimiWithAutofocus(tester);
+
+      expect(_composerFocused(tester), isFalse);
+
+      repository.startResult = const Right(_conversation);
+      await tester.tap(find.text('Reintentar'));
+      await tester.pumpAndSettle();
+
+      expect(_composerFocused(tester), isTrue);
+      expect(_isExpanded(tester), isFalse);
+    });
+
+    testWidgets('waits for a request in flight to finish', (tester) async {
+      final repository = _ScriptedRepository()
+        ..replies.add(Right(_reply('¡Hola! ¿En qué te ayudo?')))
+        ..hold = Completer();
+      await _pumpHome(tester, repository);
+      await _openMimi(tester);
+      await tester.enterText(find.byType(TextField), 'Hola');
+      await tester.pump();
+      await tester.tap(find.bySemanticsLabel('Enviar'));
+      await tester.pump();
+      Navigator.of(tester.element(find.byType(MimiSheet))).pop();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      await _openMimiWithAutofocus(tester, settle: false);
+      expect(find.text('Mimi está pensando…'), findsOneWidget);
+      expect(_composerFocused(tester), isFalse);
+
+      repository.hold!.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.text('¡Hola! ¿En qué te ayudo?'), findsOneWidget);
+      expect(_composerFocused(tester), isTrue);
+    });
+
+    for (final (name, ui) in [
+      ('confirmation', _confirmation),
+      ('card selection', const ChatUi.cardSelector(cards: [_card])),
+    ]) {
+      testWidgets('is not taken while a $name is pending', (tester) async {
+        final repository = _ScriptedRepository()
+          ..replies.add(Right(_reply('Elegí una opción.', ui)));
+        await _pumpHome(tester, repository);
+        await _openMimi(tester);
+        await _send(tester, 'Hacé la operación');
+        await _closeMimi(tester);
+
+        await _openMimiWithAutofocus(tester);
+
+        expect(find.text('Elegí una opción.'), findsOneWidget);
+        expect(_composerFocused(tester), isFalse);
+        expect(_isExpanded(tester), isFalse);
+      });
+    }
+
+    testWidgets('is not taken back after the user collapses the sheet', (
+      tester,
+    ) async {
+      final repository = _ScriptedRepository()
+        ..startResult = const Left(ConnectionFailure());
+      await _pumpHome(tester, repository);
+      await _openMimiWithAutofocus(tester);
+
+      await tester.tap(find.bySemanticsLabel('Expandir Mimi'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Contraer Mimi'));
+      await tester.pumpAndSettle();
+      repository.startResult = const Right(_conversation);
+      await tester.tap(find.text('Reintentar'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No pudimos iniciar la conversación.'), findsNothing);
+      expect(_composerFocused(tester), isFalse);
+    });
+
+    testWidgets('collapsing releases an automatic focus for good', (
+      tester,
+    ) async {
+      final repository = _ScriptedRepository()
+        ..replies.add(Right(_reply('¡Hola!')));
+      await _pumpHome(tester, repository);
+      await _openMimiWithAutofocus(tester);
+      expect(_composerFocused(tester), isTrue);
+
+      await tester.tap(find.bySemanticsLabel('Expandir Mimi'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Contraer Mimi'));
+      await tester.pumpAndSettle();
+
+      expect(_composerFocused(tester), isFalse);
+      expect(_isExpanded(tester), isFalse);
+    });
+
+    testWidgets('a user tap still expands after an automatic focus', (
+      tester,
+    ) async {
+      await _pumpHome(tester, _ScriptedRepository());
+      await _openMimiWithAutofocus(tester);
+      await tester.tap(find.bySemanticsLabel('Expandir Mimi'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Contraer Mimi'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(TextField));
+      await tester.pumpAndSettle();
+
+      expect(_composerFocused(tester), isTrue);
+      expect(_isExpanded(tester), isTrue);
+    });
   });
 
   testWidgets('shows the message while Mimi answers, then the reply', (
@@ -384,6 +605,63 @@ void main() {
     expect(find.text('Confirmá la transferencia'), findsOneWidget);
     expect(find.text('Confirmar'), findsNothing, reason: 'now history');
     expect(find.text('Cancelar'), findsNothing);
+  });
+
+  testWidgets('a completed transfer updates Home while Mimi stays open', (
+    tester,
+  ) async {
+    final home = FakeHomeRepository();
+    final repository = _ScriptedRepository()
+      ..replies.addAll([
+        Right(_reply('Revisá la transferencia.', _confirmation)),
+        Right(
+          _reply(
+            'La transferencia se realizó con éxito.',
+            ChatUi.transferSummary(
+              transferId: 'bbb202a2-9083-434a-8551-c68d31c3ba39',
+              beneficiary: 'Laura Gómez',
+              amount: _ars('1.00'),
+              status: TransferStatus.completed,
+              executedAt: DateTime(2026, 11, 9, 13, 5),
+            ),
+          ),
+        ),
+      ]);
+    await _pumpHome(tester, repository, home: home);
+    await _openMimi(tester);
+    await _send(tester, 'Transferí 1 peso a Laura Gómez');
+    expect(home.accountRequests, 1);
+
+    home
+      ..accounts = Right([savingsAfterTransfer])
+      ..transactions = Right(transactionsAfterTransfer());
+    repository.hold = Completer();
+    await tester.tap(find.text('Confirmar'));
+    await tester.pump();
+    expect(home.accountRequests, 1, reason: 'not before the backend replies');
+
+    repository.hold!.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(home.accountRequests, 2, reason: 'as soon as the reply arrives');
+    expect(find.bySemanticsLabel('Cargando tu cuenta'), findsNothing);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MimiSheet), findsOneWidget);
+    expect(find.byType(TransferCompletedView), findsOneWidget);
+    expect(find.text(r'$ 1.284.649,75'), findsOneWidget);
+    expect(find.text(r'$ 1.284.650,75'), findsNothing);
+    expect(find.text('Transferencia a Laura Gómez'), findsOneWidget);
+    expect(find.text('Personal'), findsNothing);
+
+    await _closeMimi(tester);
+
+    expect(home.accountRequests, 2, reason: 'closing does not reload');
+    expect(find.text(r'$ 1.284.649,75'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Transferencia a Laura Gómez')).dy,
+      lessThan(tester.getTopLeft(find.text('Supermercado Día')).dy),
+    );
   });
 
   testWidgets('cancel sends the structured CANCEL interaction', (tester) async {

@@ -66,6 +66,7 @@ class TransactionQuery:
     exclusive. Both must be timezone-aware.
     """
 
+    account_id: UUID | None = None
     occurred_from: datetime | None = None
     occurred_to: datetime | None = None
     category: TransactionCategory | None = None

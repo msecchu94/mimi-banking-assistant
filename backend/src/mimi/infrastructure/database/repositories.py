@@ -429,6 +429,8 @@ class PostgresTransactionRepository:
             .where(AccountModel.customer_id == customer_id)
             .order_by(TransactionModel.occurred_at.desc(), TransactionModel.id.desc())
         )
+        if query.account_id is not None:
+            statement = statement.where(TransactionModel.account_id == query.account_id)
         if query.occurred_from is not None:
             statement = statement.where(
                 TransactionModel.occurred_at >= query.occurred_from

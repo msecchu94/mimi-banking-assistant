@@ -1,0 +1,81 @@
+{
+  "_note": "Look of every overlay, in source pixels (the recording is 3 px per app point). Colors are Mimi design tokens (mobile/lib/shared/design_system/mimi_tokens.dart).",
+  "supersample": 3,
+  "fonts": {
+    "title": "assets/fonts/Inter-SemiBold.ttf",
+    "body": "assets/fonts/Inter-Regular.ttf",
+    "label": "assets/fonts/Inter-Medium.ttf"
+  },
+  "colors": {
+    "surface": "#0C252A",
+    "surfaceElevated": "#123238",
+    "primary": "#19C6B3",
+    "primaryBright": "#25E3D2",
+    "textPrimary": "#F4F8F8",
+    "textSecondary": "#A6BBBC"
+  },
+  "card": {
+    "width": 1000,
+    "radius": 42,
+    "padding_x": 36,
+    "padding_y": 38,
+    "icon_diameter": 76,
+    "icon_fill_alpha": 0.14,
+    "star_size": 40,
+    "icon_gap": 28,
+    "title_size": 46,
+    "subtitle_size": 36,
+    "title_subtitle_gap": 12,
+    "subtitle_line_height": 1.28,
+    "max_subtitle_lines": 2,
+    "background": [
+      "#15393F",
+      "#0E2A30"
+    ],
+    "border_width": 2,
+    "border_alpha": 0.45,
+    "shadow": {
+      "blur": 26,
+      "offset_y": 10,
+      "alpha": 0.5
+    }
+  },
+  "card_motion": {
+    "enter_frames": 18,
+    "enter_offset_y": 16,
+    "exit_frames": 14,
+    "exit_offset_y": -8
+  },
+  "bubble": {
+    "_note": "Typography, colors, surface, border, radius, shadow and padding and the ✦ icon come from `card`; only the bubble's own geometry lives here.",
+    "icon_inset_y": 20,
+    "tail_width": 22,
+    "tail_height": 30,
+    "tail_depth": 30,
+    "gap_to_button": 36,
+    "enter_offset_x": -14
+  },
+  "home_focus": {
+    "_note": "glow_reach: measured reach of the button's glow beyond its body (it runs off the right edge). keep_padding adds room for the feathered edge so the whole transition lies outside the glow. dim_falloff: dimming is 0 within the first distance from the button and reaches `dim` at the second.",
+    "blur_radius": 12,
+    "dim": 0.08,
+    "dim_falloff": [
+      60,
+      900
+    ],
+    "glow_reach": {
+      "top": 55,
+      "bottom": 85,
+      "left": 70
+    },
+    "keep_padding": {
+      "top": 85,
+      "bottom": 115,
+      "left": 98,
+      "right": 98
+    },
+    "mask_feather": 12,
+    "sheet_feather": 40,
+    "sheet_clearance": 24
+  }
+}

@@ -5,6 +5,7 @@ from openai import OpenAI
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from mimi.application.account_queries import AccountQueries
 from mimi.application.conversation_engine import ConversationEngine
 from mimi.application.llm import LLMProvider
 from mimi.application.read_only_queries import ReadOnlyQueryRouter
@@ -29,6 +30,7 @@ class Container:
     transaction_scope: PostgresTransactionScope
     llm_provider: LLMProvider
     conversation_engine: ConversationEngine
+    account_queries: AccountQueries
 
     def close(self) -> None:
         self.engine.dispose()
@@ -66,4 +68,5 @@ def build_container(settings: Settings, llm_provider: LLMProvider) -> Container:
             router=ReadOnlyQueryRouter(settings.timezone),
             clock=lambda: datetime.now(UTC),
         ),
+        account_queries=AccountQueries(transaction_scope),
     )

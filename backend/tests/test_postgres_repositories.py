@@ -522,6 +522,24 @@ def test_transaction_filters_combine(
     ]
 
 
+def test_transactions_are_filtered_by_account(
+    session_factory: sessionmaker[Session], dataset: Dataset
+) -> None:
+    def ids(account_id: UUID) -> list[UUID]:
+        query = TransactionQuery(account_id=account_id)
+        return _list_transaction_ids(session_factory, dataset.customer_id, query)
+
+    assert ids(dataset.savings_id) == [
+        dataset.groceries_id,
+        dataset.dining_id,
+        dataset.salary_id,
+        dataset.september_groceries_id,
+    ]
+    assert ids(dataset.dollars_id) == []
+    # Another customer's account matches nothing, not that customer's records.
+    assert ids(dataset.other_account_id) == []
+
+
 def test_transactions_without_matches_are_empty(
     session_factory: sessionmaker[Session], dataset: Dataset
 ) -> None:

@@ -1,0 +1,5 @@
+# Local tooling and media: sources and renders stay out of git.
+.venv/
+__pycache__/
+input/
+output/

@@ -1257,7 +1257,49 @@ The following invariants apply to the V1 Chat API:
 
 ---
 
-## 33. Scope of This Document
+## 33. Read-Only Account Endpoints
+
+Home reads persisted account data directly, without a Conversation and
+without LLM interpretation. These endpoints never change state.
+
+```http
+GET /accounts
+GET /transactions?limit=3&account_id=<uuid>
+```
+
+`GET /accounts` returns the customer's accounts with their persisted
+balances:
+
+```json
+{
+  "accounts": [
+    {
+      "id": "8b0c1f6e-1f8e-4d55-9c7c-2a1f0d3e4b5a",
+      "name": "Cuenta principal",
+      "balance": { "amount": "184320.00", "currency": "ARS" },
+      "status": "ACTIVE"
+    }
+  ],
+  "metadata": { "request_id": "req-50dc23a1", "timestamp": "2026-10-09T16:30:00Z" }
+}
+```
+
+`status` is `ACTIVE` or `INACTIVE`.
+
+`GET /transactions` returns the customer's newest transactions, newest
+first, as `transactions` (Transaction List UI item shape, §20) plus
+`metadata`:
+
+- `limit` is required, between 1 and 50;
+- `account_id` is optional; an account the customer does not own matches
+  nothing and yields an empty list.
+
+Money follows §22. Invalid query parameters return `422 INVALID_REQUEST`;
+unexpected failures return `500 INTERNAL_ERROR` (§24).
+
+---
+
+## 34. Scope of This Document
 
 This document defines the V1 HTTP contract between Flutter and FastAPI.
 

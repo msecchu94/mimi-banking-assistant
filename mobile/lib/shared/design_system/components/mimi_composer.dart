@@ -60,6 +60,9 @@ class MimiComposer extends StatelessWidget {
                   keyboardType: TextInputType.text,
                   textInputAction: TextInputAction.send,
                   textCapitalization: TextCapitalization.sentences,
+                  // Submitting keeps focus, so the next message can be typed
+                  // right away; without this, the send action unfocuses.
+                  onEditingComplete: () {},
                   onSubmitted: (_) => send(),
                   cursorColor: MimiColors.primary,
                   style: MimiTypography.bodyLarge.copyWith(
