@@ -335,4 +335,4 @@ respective owners.
 
 - GitHub: [@msecchu94](https://github.com/msecchu94)
 <!-- PLACEHOLDER: add the LinkedIn profile URL and, once published, the LinkedIn demo post URL. -->
-- LinkedIn: *link coming soon*
+- LinkedIn: https://www.linkedin.com/in/maximiliano-secchi-677503178/
