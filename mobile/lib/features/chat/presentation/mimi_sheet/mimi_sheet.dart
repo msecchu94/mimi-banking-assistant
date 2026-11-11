@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter, lerpDouble;
 
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../shared/design_system/components/mimi_composer.dart';
 import '../../../../shared/design_system/mimi_tokens.dart';
+import '../../domain/models/chat_ui.dart';
 import '../chat_controller.dart';
 import '../chat_state.dart';
 import '../conversation/chat_conversation.dart';
@@ -19,7 +21,15 @@ import 'mimi_presentation.dart';
 /// conversation hands drags over to the sheet when it cannot scroll further.
 /// Dragging down from compact dismisses Mimi.
 class MimiSheet extends ConsumerStatefulWidget {
-  const MimiSheet({super.key});
+  const MimiSheet({super.key, this.autofocusComposer = false});
+
+  /// Demo aid: focus the composer once per opening, as soon as the
+  /// conversation is ready for text, without expanding the sheet.
+  ///
+  /// Never while the conversation starts, a request is in flight, the latest
+  /// reply awaits a tap (confirmation or card selection), or after the user
+  /// collapsed the sheet.
+  final bool autofocusComposer;
 
   /// The sheet's visible surface, whose height reflects the detent.
   static const surfaceKey = Key('mimi-sheet-surface');
@@ -72,15 +82,29 @@ class _MimiSheetState extends ConsumerState<MimiSheet>
   double _keyboardInset = 0;
   bool _handingOff = false;
 
+  /// Whether this opening no longer auto-focuses the composer: it already
+  /// did, or the user collapsed the sheet.
+  bool _autofocusSettled = false;
+
+  /// Set while the composer gains focus automatically, which must not expand
+  /// the sheet.
+  bool _autofocusing = false;
+
   @override
   void initState() {
     super.initState();
     _focus.addListener(() {
-      if (_focus.hasFocus) _animateTo(expanded: true);
+      if (!_focus.hasFocus) return;
+      if (_autofocusing) {
+        _autofocusing = false;
+        return;
+      }
+      _animateTo(expanded: true);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final state = ref.read(chatControllerProvider);
+      _maybeAutofocus(state);
       if (state is ChatInitial || state is ChatStartFailed) {
         ref.read(chatControllerProvider.notifier).start();
       }
@@ -104,7 +128,10 @@ class _MimiSheetState extends ConsumerState<MimiSheet>
   bool get _isExpanded => _expansion.value > 0.5;
 
   void _animateTo({required bool expanded}) {
-    if (!expanded) _focus.unfocus();
+    if (!expanded) {
+      _autofocusSettled = true;
+      _focus.unfocus();
+    }
     _expansion.animateTo(expanded ? 1 : 0, curve: _settleCurve);
   }
 
@@ -163,6 +190,26 @@ class _MimiSheetState extends ConsumerState<MimiSheet>
     });
   }
 
+  /// Focuses the composer when [MimiSheet.autofocusComposer] applies to
+  /// [state]; see there for when it does not.
+  void _maybeAutofocus(ChatState state) {
+    if (!widget.autofocusComposer || _autofocusSettled) return;
+    if (state is! ChatActive || state.pendingAction != null) return;
+    final awaitsTap = switch (state.latestReply?.ui) {
+      ConfirmationUi() || CardSelectorUi() => true,
+      _ => false,
+    };
+    if (awaitsTap) return;
+
+    _autofocusSettled = true;
+    if (_focus.hasFocus) return;
+    _autofocusing = true;
+    _focus.requestFocus();
+    // Focus changes apply in a microtask queued by requestFocus; by now the
+    // listener has seen it, or no change happened.
+    scheduleMicrotask(() => _autofocusing = false);
+  }
+
   void _send(String message) {
     ref.read(chatControllerProvider.notifier).sendMessage(message);
     _text.clear();
@@ -172,6 +219,7 @@ class _MimiSheetState extends ConsumerState<MimiSheet>
   Widget build(BuildContext context) {
     ref.listen(chatControllerProvider, (previous, next) {
       if (next is ChatActive) _scrollToEnd();
+      _maybeAutofocus(next);
       // A message that failed to send goes back to the composer.
       if (next case ChatActive(
         lastFailure: ChatActionFailure(
@@ -188,8 +236,16 @@ class _MimiSheetState extends ConsumerState<MimiSheet>
     final media = MediaQuery.of(context);
     final keyboardInset = media.viewInsets.bottom;
     if (keyboardInset != _keyboardInset) {
+      // The software keyboard appearing for the composer means typing:
+      // expand, as focusing by tap does.
+      final keyboardShown = _keyboardInset == 0 && keyboardInset > 0;
       _keyboardInset = keyboardInset;
       _scrollToEnd();
+      if (keyboardShown && _focus.hasFocus) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _focus.hasFocus) _animateTo(expanded: true);
+        });
+      }
     }
     final composerBottom = keyboardInset > 0
         ? MimiSpacing.sm

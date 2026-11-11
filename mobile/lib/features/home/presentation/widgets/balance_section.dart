@@ -15,6 +15,9 @@ class BalanceSection extends StatelessWidget {
 
   static const hiddenBalance = r'$ ••••••';
 
+  /// How long a refreshed balance takes to replace the one shown.
+  static const balanceTransition = Duration(milliseconds: 300);
+
   final String currency;
   final String balance;
   final bool isHidden;
@@ -60,7 +63,22 @@ class BalanceSection extends StatelessWidget {
                   excludeSemantics: true,
                   child: Text(hiddenBalance, style: amountStyle),
                 )
-              : Text(balance, style: amountStyle),
+              // A refreshed balance cross-fades from the one shown; the
+              // first balance and the visibility toggle appear directly.
+              : AnimatedSwitcher(
+                  duration: balanceTransition,
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeOut,
+                  layoutBuilder: (current, previous) => Stack(
+                    alignment: AlignmentDirectional.centerStart,
+                    children: [...previous, ?current],
+                  ),
+                  child: Text(
+                    balance,
+                    key: ValueKey(balance),
+                    style: amountStyle,
+                  ),
+                ),
         ),
       ],
     );

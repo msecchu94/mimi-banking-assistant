@@ -43,7 +43,9 @@ Mimi
 Use the approved ✦ Mimi FAB.
 It must remain visible without competing with financial information.
 FL-06 Behavior
-Data is local/mock.
+Balance, account name/status and the account's 3 newest transactions come from the backend's read-only endpoints (API_CONTRACT.md §33), for the customer's ARS account. Greeting, account description, holder name and alias are presentation-only static copy.
+While loading, Home shows a progress indicator in place of the account content; on failure, a message with a retry.
+When Mimi reports a completed transfer, Home reloads this data from the backend right away, even with Mimi open, keeping the current content until it arrives. A changed balance cross-fades; a new transaction enters at the top while the one no longer among the newest 3 exits (about 300 ms).
 Only the balance visibility interaction is required.
 Transferir, Pagar, Tarjetas, Ver datos and Ver todos do not require real flows in FL-06.
 Do not create temporary destination screens.
@@ -52,7 +54,6 @@ Follow DESIGN_SYSTEM.md.
 Use responsive, content-driven Flutter layouts. Avoid translating absolute Figma coordinates.
 Target common mobile widths, including approximately 320 px and above.
 Out of Scope
-backend integration
 Chat / Mimi Bottom Sheet
 transfer/payment/card flows
 bottom navigation

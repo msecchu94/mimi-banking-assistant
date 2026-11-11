@@ -151,6 +151,11 @@ cd mobile
 flutter run --dart-define-from-file=config/development.json
 ```
 
+Para grabar demos sin tocar la pantalla, agregar
+`--dart-define=MIMI_COMPOSER_AUTOFOCUS=true`: al abrir Mimi, el campo de texto
+recibe el foco (sin expandir el panel) y se puede escribir con el teclado
+físico; `Cmd+K` muestra el teclado del simulador. Desactivado por defecto.
+
 Luego:
 
 ```text

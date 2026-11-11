@@ -27,6 +27,13 @@ ChatReply chatReplyFromDto(ChatResponseDto dto) => _contractValue(
   ),
 );
 
+/// Shared with Home, whose read-only endpoints use the same contract shapes.
+Money moneyFromDto(MoneyDto dto) => _contractValue(() => _money(dto));
+
+/// Shared with Home, whose read-only endpoints use the same contract shapes.
+Transaction transactionFromDto(TransactionDto dto) =>
+    _contractValue(() => _transaction(dto));
+
 T _contractValue<T>(T Function() map) {
   try {
     return map();

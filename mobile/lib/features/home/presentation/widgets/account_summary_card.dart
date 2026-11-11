@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../shared/design_system/components/mimi_button.dart';
 import '../../../../shared/design_system/mimi_tokens.dart';
 import '../../../../shared/design_system/mimi_typography.dart';
-import '../home_mock_data.dart';
+import '../home_view_data.dart';
 
 /// The savings account the Home summarises, on a dark teal banking surface.
 ///
